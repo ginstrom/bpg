@@ -26,12 +26,61 @@ console = Console()
 err_console = Console(stderr=True, style="bold red")
 
 
+from bpg.compiler.parser import parse_process_file, ParseError
+from bpg.compiler.validator import validate_process, ValidationError
+from bpg.compiler.visualizer import generate_html
+
+
+@app.command()
+def visualize(
+    process_file: Path = typer.Argument(
+        ...,
+        help="Path to the process definition file (e.g. process.bpg.yaml).",
+        exists=True,
+    ),
+    output_dir: Path = typer.Option(
+        Path(".bpg/viz"),
+        "--output-dir",
+        "-o",
+        help="Directory to save the visualization HTML.",
+    ),
+    open_browser: bool = typer.Option(
+        False,
+        "--open",
+        help="Open the visualization in the default web browser.",
+    ),
+) -> None:
+    """Generate a React Flow visualization of the process graph."""
+    try:
+        process = parse_process_file(process_file)
+        validate_process(process)
+        
+        html = generate_html(process)
+        
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / f"{process_file.stem}.html"
+        output_path.write_text(html)
+        
+        console.print(f"[bold green]✓[/bold green] Visualization generated: [cyan]{output_path}[/cyan]")
+        
+        if open_browser:
+            import webbrowser
+            webbrowser.open(f"file://{output_path.absolute()}")
+            
+    except (ParseError, ValidationError) as e:
+        err_console.print(f"Error: {e}")
+        raise typer.Exit(code=1)
+    except Exception as e:
+        err_console.print(f"Unexpected error: {e}")
+        raise typer.Exit(code=1)
+
+
 @app.command()
 def plan(
     process_file: Path = typer.Argument(
         ...,
         help="Path to the process definition file (e.g. process.bpg.yaml).",
-        exists=False,  # validated at runtime once implemented
+        exists=True,
     ),
     state_dir: Path = typer.Option(
         Path(".bpg-state"),
@@ -45,10 +94,25 @@ def plan(
     and produces a human-readable plan of what would change on apply.
     No execution occurs during plan.
     """
-    console.print(
-        f"[bold yellow]bpg plan[/bold yellow]: not yet implemented "
-        f"(file=[cyan]{process_file}[/cyan], state-dir=[cyan]{state_dir}[/cyan])"
-    )
+    try:
+        process = parse_process_file(process_file)
+        validate_process(process)
+        
+        console.print(f"[bold green]✓[/bold green] Process [cyan]{process_file}[/cyan] is valid.")
+        console.print(f"Nodes: {len(process.nodes)}, Edges: {len(process.edges)}, Trigger: {process.trigger}")
+        
+        # TODO: Implement diffing against state_dir
+        console.print(
+            f"\n[bold yellow]bpg plan[/bold yellow]: diffing against [cyan]{state_dir}[/cyan] "
+            "not yet implemented."
+        )
+        
+    except (ParseError, ValidationError) as e:
+        err_console.print(f"Error: {e}")
+        raise typer.Exit(code=1)
+    except Exception as e:
+        err_console.print(f"Unexpected error: {e}")
+        raise typer.Exit(code=1)
 
 
 @app.command()
@@ -144,3 +208,7 @@ def status(
         f"process=[cyan]{process_name or 'all'}[/cyan], "
         f"state-dir=[cyan]{state_dir}[/cyan])"
     )
+
+
+if __name__ == "__main__":
+    app()

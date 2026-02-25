@@ -41,50 +41,77 @@ def validate_process(process: Process) -> None:
         process: A ``Process`` instance produced by ``parse_process_file``.
 
     Raises:
-        ValidationError: On the first semantic error encountered.  Future
-            versions may collect all errors before raising.
+        ValidationError: On the first semantic error encountered.
     """
-    # TODO: implement each validation step in order
-    #   _validate_type_refs(process)
-    #   _validate_node_type_refs(process)
-    #   _validate_edge_mappings(process)
-    #   _validate_when_expressions(process)
-    #   _detect_cycles(process)
-    #   _validate_provider_configs(process)
-    raise NotImplementedError("validate_process not yet implemented")
+    _validate_type_refs(process)
+    _validate_node_type_refs(process)
+    _detect_cycles(process)
+    _validate_trigger(process)
+    # _validate_edge_mappings(process)  # Future: more complex type checking
+    # _validate_when_expressions(process)
+    # _validate_provider_configs(process)
 
 
 def _validate_type_refs(process: Process) -> None:
     """Assert all type names referenced by node types exist in the type registry."""
-    # TODO: implement
-    raise NotImplementedError("_validate_type_refs not yet implemented")
+    known_types = set(process.types.keys())
+    # Built-in primitive types are always known
+    primitives = {"string", "number", "bool", "duration", "datetime", "object"}
+    known_types.update(primitives)
+
+    for nt_name, nt in process.node_types.items():
+        if nt.input_type not in known_types:
+            raise ValidationError(f"Unknown input type {nt.input_type!r}", node=nt_name, field="in")
+        if nt.output_type not in known_types:
+            raise ValidationError(f"Unknown output type {nt.output_type!r}", node=nt_name, field="out")
 
 
 def _validate_node_type_refs(process: Process) -> None:
     """Assert all node instance ``type`` references resolve to declared node types."""
-    # TODO: implement
-    raise NotImplementedError("_validate_node_type_refs not yet implemented")
+    for node_name, node in process.nodes.items():
+        if node.node_type not in process.node_types:
+            raise ValidationError(
+                f"Unknown node type {node.node_type!r}", node=node_name, field="type"
+            )
 
 
-def _validate_edge_mappings(process: Process) -> None:
-    """Type-check all edge ``with`` blocks against target node input schemas."""
-    # TODO: implement
-    raise NotImplementedError("_validate_edge_mappings not yet implemented")
+def _validate_trigger(process: Process) -> None:
+    """Assert the trigger node exists and has no incoming edges."""
+    if process.trigger not in process.nodes:
+        raise ValidationError(f"Trigger node {process.trigger!r} not found in nodes", field="trigger")
 
-
-def _validate_when_expressions(process: Process) -> None:
-    """Parse and syntax-validate all edge ``when`` condition expressions."""
-    # TODO: implement
-    raise NotImplementedError("_validate_when_expressions not yet implemented")
+    for edge in process.edges:
+        if edge.target == process.trigger:
+            raise ValidationError(
+                f"Trigger node {process.trigger!r} cannot have incoming edges",
+                node=process.trigger,
+            )
 
 
 def _detect_cycles(process: Process) -> None:
     """Run DFS cycle detection on the process execution graph."""
-    # TODO: implement using DFS topological sort
-    raise NotImplementedError("_detect_cycles not yet implemented")
+    adj = {name: [] for name in process.nodes}
+    for edge in process.edges:
+        if edge.source not in adj:
+            raise ValidationError(f"Edge references unknown source node {edge.source!r}")
+        if edge.target not in adj:
+            raise ValidationError(f"Edge references unknown target node {edge.target!r}")
+        adj[edge.source].append(edge.target)
 
+    visited = set()
+    path = set()
 
-def _validate_provider_configs(process: Process) -> None:
-    """Validate node instance ``config`` values against their node type ``config_schema``."""
-    # TODO: implement
-    raise NotImplementedError("_validate_provider_configs not yet implemented")
+    def visit(u):
+        if u in path:
+            raise ValidationError(f"Cycle detected involving node {u!r}")
+        if u in visited:
+            return
+        path.add(u)
+        for v in adj[u]:
+            visit(v)
+        path.remove(u)
+        visited.add(u)
+
+    for node in process.nodes:
+        if node not in visited:
+            visit(node)

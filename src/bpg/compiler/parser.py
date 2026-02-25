@@ -42,8 +42,21 @@ def load_yaml_file(path: Path) -> Dict[str, Any]:
     Raises:
         ParseError: If the file cannot be read or is not valid YAML.
     """
-    # TODO: implement
-    raise NotImplementedError(f"load_yaml_file not yet implemented (path={path})")
+    if not path.exists():
+        raise ParseError("File not found", file=path)
+
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            content = yaml.safe_load(f)
+            if content is None:
+                return {}
+            if not isinstance(content, dict):
+                raise ParseError("YAML content must be a dictionary", file=path)
+            return content
+    except yaml.YAMLError as e:
+        raise ParseError(f"Invalid YAML: {e}", file=path)
+    except Exception as e:
+        raise ParseError(f"Unexpected error reading file: {e}", file=path)
 
 
 def parse_process_file(path: Path) -> Process:
@@ -61,11 +74,9 @@ def parse_process_file(path: Path) -> Process:
     Raises:
         ParseError: If the file is missing required sections or malformed.
     """
-    # TODO: implement
-    #   1. load_yaml_file(path)
-    #   2. Extract and build TypeDef map from raw["types"]
-    #   3. Extract and build NodeType map from raw["node_types"]
-    #   4. Build NodeInstance list from raw["nodes"]
-    #   5. Build Edge list from raw["edges"]
-    #   6. Construct and return Process(...)
-    raise NotImplementedError(f"parse_process_file not yet implemented (path={path})")
+    raw = load_yaml_file(path)
+    try:
+        return Process.model_validate(raw)
+    except Exception as e:
+        # Pydantic errors can be verbose; for Phase 1 we just wrap them.
+        raise ParseError(f"Process validation failed: {e}", file=path)

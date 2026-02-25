@@ -12,7 +12,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 
 # ---------------------------------------------------------------------------
@@ -29,27 +29,22 @@ class _ImmutableModel(BaseModel):
 # Types (§3.1)
 # ---------------------------------------------------------------------------
 
-class TypeDef(_ImmutableModel):
-    """A named, structured type registered in the global type registry.
-
-    Field values are BPG primitive type strings, e.g. "string", "bool",
-    "enum(S1,S2,S3)", "list<string>", or optional variants ending with "?".
+class TypeDef(RootModel):
+    """A structured type definition (mapping of field name to BPG type string).
 
     Example:
         BugReport:
           title: string
           severity: enum(S1,S2,S3)
-          description: string
-          reporter_email: string?
     """
 
-    name: str = Field(description="Registered type name, e.g. 'BugReport'.")
-    fields: Dict[str, str] = Field(
-        description=(
-            "Mapping of field name to BPG type string. "
-            "Optional fields are denoted with a trailing '?'."
-        )
-    )
+    root: Dict[str, str]
+
+    def __getitem__(self, item: str) -> str:
+        return self.root[item]
+
+    def items(self):
+        return self.root.items()
 
 
 # ---------------------------------------------------------------------------
@@ -74,8 +69,6 @@ class NodeType(_ImmutableModel):
             model: string?
     """
 
-    name: str = Field(description="Node type name, e.g. 'triage_agent'.")
-    version: str = Field(description="Semantic version string, e.g. 'v1'.")
     input_type: str = Field(alias="in", description="Name of the registered input TypeDef.")
     output_type: str = Field(alias="out", description="Name of the registered output TypeDef.")
     provider: str = Field(description="Provider identifier, e.g. 'agent.pipeline'.")
@@ -90,11 +83,6 @@ class NodeType(_ImmutableModel):
     )
 
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
-
-    @property
-    def qualified_name(self) -> str:
-        """Return the versioned node type identifier, e.g. 'triage_agent@v1'."""
-        return f"{self.name}@{self.version}"
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +142,6 @@ class NodeInstance(_ImmutableModel):
             model: gpt-4o
     """
 
-    name: str = Field(description="Instance name within the process, e.g. 'triage'.")
     node_type: str = Field(
         alias="type",
         description="Versioned node type reference, e.g. 'triage_agent@v1'.",
