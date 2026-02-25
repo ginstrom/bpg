@@ -12,6 +12,16 @@ Compilation pipeline (§5):
     9. Diff IR against persisted state to produce a plan
 """
 
+from bpg.compiler.ir import (
+    ExecutionIR,
+    FieldType,
+    ResolvedEdge,
+    ResolvedNode,
+    ResolvedTypeDef,
+    compile_process,
+    parse_field_type,
+    resolve_typedef,
+)
 from bpg.compiler.parser import ParseError, parse_process_file
 from bpg.compiler.validator import ValidationError, validate_process
 
@@ -20,4 +30,12 @@ __all__ = [
     "ValidationError",
     "parse_process_file",
     "validate_process",
+    "ExecutionIR",
+    "FieldType",
+    "ResolvedEdge",
+    "ResolvedNode",
+    "ResolvedTypeDef",
+    "compile_process",
+    "parse_field_type",
+    "resolve_typedef",
 ]

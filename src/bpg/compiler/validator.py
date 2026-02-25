@@ -47,9 +47,9 @@ def validate_process(process: Process) -> None:
     _validate_node_type_refs(process)
     _detect_cycles(process)
     _validate_trigger(process)
+    _validate_provider_configs(process)
     # _validate_edge_mappings(process)  # Future: more complex type checking
     # _validate_when_expressions(process)
-    # _validate_provider_configs(process)
 
 
 def _validate_type_refs(process: Process) -> None:
@@ -115,3 +115,36 @@ def _detect_cycles(process: Process) -> None:
     for node in process.nodes:
         if node not in visited:
             visit(node)
+
+
+def _validate_provider_configs(process: Process) -> None:
+    """Assert every node instance config satisfies its node type's config_schema.
+
+    A field is required if its type string does NOT end with ``?``.  Unknown
+    fields (keys in ``config`` that are not in ``config_schema``) are also an
+    error.
+    """
+    for node_name, node in process.nodes.items():
+        node_type = process.node_types[node.node_type]
+        config_schema = node_type.config_schema
+        config = node.config
+
+        # Detect extra fields not declared in the schema
+        extra = set(config.keys()) - set(config_schema.keys())
+        if extra:
+            raise ValidationError(
+                f"config contains unknown fields {sorted(extra)!r}",
+                node=node_name,
+            )
+
+        # Detect missing required fields (required = type string does not end with '?')
+        missing = [
+            field_name
+            for field_name, type_str in config_schema.items()
+            if not type_str.endswith("?") and field_name not in config
+        ]
+        if missing:
+            raise ValidationError(
+                f"config is missing required fields {sorted(missing)!r}",
+                node=node_name,
+            )

@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import html as _html
-from collections import defaultdict, deque
+from collections import defaultdict
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from bpg.models.schema import Process
+    from bpg.compiler.ir import ExecutionIR
 
 
 def _e(s: object) -> str:
@@ -18,42 +18,27 @@ def _e(s: object) -> str:
 def _compute_positions(
     node_names: list[str],
     edges: list,
+    topological_order: list[str],
     node_w: float,
     node_h: float,
     h_gap: float,
     v_gap: float,
     canvas_w: float,
     top_pad: float,
-) -> tuple[dict[str, tuple[float, float]], float]:
+) -> tuple[dict[str, tuple[float, float]], dict[str, int], float]:
     """
-    Layered-graph layout (longest-path layering via Kahn topological sort).
+    Layered-graph layout (longest-path layering using the provided topological order).
 
-    Returns (positions, total_svg_height).
+    Returns (positions, layer_map, total_svg_height).
     """
+    # Build adjacency for layer assignment
+    node_set = set(node_names)
     out_adj: dict[str, list[str]] = defaultdict(list)
-    in_degree: dict[str, int] = {n: 0 for n in node_names}
     for e in edges:
-        if e.source in in_degree and e.target in in_degree:
+        if e.source in node_set and e.target in node_set:
             out_adj[e.source].append(e.target)
-            in_degree[e.target] += 1
 
-    # Kahn's topological sort
-    queue: deque[str] = deque(n for n in node_names if in_degree[n] == 0)
-    topo: list[str] = []
-    tmp_in = dict(in_degree)
-    while queue:
-        node = queue.popleft()
-        topo.append(node)
-        for tgt in out_adj[node]:
-            tmp_in[tgt] -= 1
-            if tmp_in[tgt] == 0:
-                queue.append(tgt)
-
-    # Nodes not reached (cycle members) appended in original order
-    visited = set(topo)
-    for n in node_names:
-        if n not in visited:
-            topo.append(n)
+    topo: list[str] = list(topological_order)
 
     # Assign layer = max(layer[pred] + 1)
     layer: dict[str, int] = {n: 0 for n in node_names}
@@ -83,22 +68,23 @@ def _compute_positions(
     return positions, layer, svg_h
 
 
-def generate_html(process: "Process") -> str:
+def generate_html(ir: "ExecutionIR") -> str:
     """Generates a fully self-contained HTML+SVG visualization (no CDN dependencies)."""
-    process_name = process.metadata.name if process.metadata else "BPG Process"
-    trigger_node = process.trigger
+    process_name = ir.process.metadata.name if ir.process.metadata else "BPG Process"
+    trigger_node = ir.process.trigger
 
     node_w: float = 200
-    node_h: float = 80
+    node_h: float = 95
     h_gap: float = 60
     v_gap: float = 80
     canvas_w: float = 700
     top_pad: float = 60   # room for the title
 
-    node_names = list(process.nodes.keys())
+    node_names = list(ir.process.nodes.keys())
 
     positions, layer_map, svg_h = _compute_positions(
-        node_names, process.edges, node_w, node_h, h_gap, v_gap, canvas_w, top_pad
+        node_names, ir.process.edges, ir.topological_order,
+        node_w, node_h, h_gap, v_gap, canvas_w, top_pad
     )
 
     parts: list[str] = []
@@ -119,7 +105,7 @@ def generate_html(process: "Process") -> str:
     parts.append(f'<rect width="{canvas_w:.0f}" height="{svg_h:.0f}" fill="#f8fafc"/>')
 
     # ── Edges (drawn before nodes so they appear behind) ──────────────────
-    for edge in process.edges:
+    for edge in ir.process.edges:
         src, tgt = edge.source, edge.target
         if src not in positions or tgt not in positions:
             continue
@@ -188,7 +174,7 @@ def generate_html(process: "Process") -> str:
 
     # ── Nodes ─────────────────────────────────────────────────────────────
     for name, (x, y) in positions.items():
-        inst = process.nodes[name]
+        inst = ir.process.nodes[name]
         is_trigger = name == trigger_node
 
         fill = "#f0f9ff" if is_trigger else "#ffffff"
@@ -226,6 +212,17 @@ def generate_html(process: "Process") -> str:
                 f'font-family="system-ui,sans-serif" font-size="10" fill="#94a3b8" text-anchor="middle">'
                 f'{_e(desc)}</text>'
             )
+
+        # ── In/Out type badge ─────────────────────────────────────────────
+        rnode = ir.resolved_nodes[name]
+        in_name = rnode.in_type.name
+        out_name = rnode.out_type.name
+        type_label = f"in: {in_name}  \u2192  out: {out_name}"
+        parts.append(
+            f'<text x="{cx:.0f}" y="{y + 83:.0f}" '
+            f'font-family="system-ui,sans-serif" font-size="9" fill="#94a3b8" text-anchor="middle">'
+            f'{_e(type_label)}</text>'
+        )
 
     # ── Title ──────────────────────────────────────────────────────────────
     parts.append(

@@ -1,32 +1,66 @@
 """BPG provider layer — pluggable execution backends.
 
-All providers MUST implement the provider contract defined in §3.3:
+All providers implement the contract defined in §3.3 of the spec:
 
     invoke(input, config, context) -> ExecutionHandle
-    poll(handle) -> ExecutionStatus
-    await(handle, timeout) -> TypedOutput
-    cancel(handle) -> None
+    poll(handle)                   -> ExecutionStatus
+    await_result(handle, timeout)  -> TypedOutput
+    cancel(handle)                 -> None
 
-Providers MUST:
-    - Accept and honor idempotency keys
-    - Produce structured, schema-conformant output
-    - Surface errors as typed ProviderError values, not exceptions
-    - Be stateless with respect to process logic (all state lives in the runtime)
+Idempotency (§8)
+----------------
+Every invoke call is keyed before reaching the provider.  Callers use
+``compute_idempotency_key`` to derive the key and embed it in an
+``ExecutionContext`` before calling ``Provider.invoke``.
 
-Built-in provider IDs (§3.3):
-    agent.pipeline   — AI agent pipeline invocation
-    slack.interactive — Interactive Slack approval messages
-    dashboard.form   — Web form for structured human input
-    http.webhook     — Generic HTTP webhook send/receive
-    http.gitlab      — GitLab REST API operations
-    queue.kafka      — Kafka publish/consume
-    timer.delay      — Wait a specified duration
+Public API
+----------
+    Provider                — Abstract base class for all providers
+    ExecutionHandle         — Opaque handle returned by invoke
+    ExecutionStatus         — Running / Completed / Failed
+    ExecutionContext         — Runtime context (run_id, node_name, key, ...)
+    ProviderError           — Typed error (code, message, retryable)
+    compute_idempotency_key — SHA-256(run_id:node_name:canonical_json(input))
+    PROVIDER_REGISTRY       — Maps provider ID strings → implementation classes
+
+Built-in provider IDs (§3.3)
+-----------------------------
+    mock          — Canned-output provider for testing
+    http.webhook  — Generic HTTP webhook (sync or async poll)
 """
 
-# Provider implementations are registered here as they are built out.
-# Example (once implemented):
-#   from bpg.providers.agent_pipeline import AgentPipelineProvider
-#   from bpg.providers.slack_interactive import SlackInteractiveProvider
+from bpg.providers.base import (
+    ExecutionContext,
+    ExecutionHandle,
+    ExecutionStatus,
+    Provider,
+    ProviderError,
+    compute_idempotency_key,
+)
+from bpg.providers.mock import MockProvider
+from bpg.providers.webhook import WebhookProvider
 
-PROVIDER_REGISTRY: dict[str, type] = {}
-"""Maps provider ID strings to their implementation classes."""
+__all__ = [
+    "Provider",
+    "ExecutionHandle",
+    "ExecutionStatus",
+    "ExecutionContext",
+    "ProviderError",
+    "compute_idempotency_key",
+    "MockProvider",
+    "WebhookProvider",
+    "PROVIDER_REGISTRY",
+]
+
+PROVIDER_REGISTRY: dict[str, type[Provider]] = {
+    MockProvider.provider_id: MockProvider,
+    WebhookProvider.provider_id: WebhookProvider,
+}
+"""Maps provider ID strings to their implementation classes.
+
+Example::
+
+    provider_cls = PROVIDER_REGISTRY["http.webhook"]
+    provider = provider_cls()
+    handle = provider.invoke(input, config, context)
+"""

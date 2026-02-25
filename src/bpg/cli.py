@@ -29,6 +29,7 @@ err_console = Console(stderr=True, style="bold red")
 from bpg.compiler.parser import parse_process_file, ParseError
 from bpg.compiler.validator import validate_process, ValidationError
 from bpg.compiler.visualizer import generate_html
+from bpg.compiler.ir import compile_process
 from bpg.compiler.planner import Plan
 from bpg.state.store import StateStore
 
@@ -56,8 +57,9 @@ def visualize(
     try:
         process = parse_process_file(process_file)
         validate_process(process)
-        
-        html = generate_html(process)
+        ir = compile_process(process)
+
+        html = generate_html(ir)
         
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / f"{process_file.stem}.html"
@@ -173,7 +175,9 @@ def apply(
         process_name = process.metadata.name if process.metadata else "default"
         store = StateStore(state_dir)
         old_process = store.load_process(process_name)
-        
+        old_record = store.load_record(process_name)
+        plan_state_hash = (old_record or {}).get("hash")
+
         plan = Plan(new_process=process, old_process=old_process)
         
         if plan.is_empty():
@@ -195,9 +199,54 @@ def apply(
                 console.print("[red]Aborted.[/red]")
                 raise typer.Exit()
 
-        # Apply = Save state for now (no runtime yet)
-        h = store.save_process(process)
-        console.print(f"[bold green]✓[/bold green] Applied successfully. Definition hash: [cyan]{h[:8]}[/cyan]")
+        # Drift check: re-load the record after confirmation and compare hashes
+        current_record = store.load_record(process_name)
+        if (current_record or {}).get("hash") != plan_state_hash:
+            err_console.print(
+                f"State for '{process_name}' has drifted since plan was computed. "
+                "Re-run 'bpg plan' before applying."
+            )
+            raise typer.Exit(code=1)
+
+        from bpg.providers import PROVIDER_REGISTRY
+
+        # Use freshest record for undeploy artifacts
+        old_deployments = (current_record or {}).get("deployments", {})
+
+        deployments: dict = {}
+
+        # Deploy added/modified nodes
+        with console.status("[bold green]Deploying provider artifacts..."):
+            for node_name in plan.added_nodes + plan.modified_nodes:
+                node_inst = process.nodes[node_name]
+                node_type = process.node_types[node_inst.node_type]
+                provider_cls = PROVIDER_REGISTRY.get(node_type.provider)
+                if provider_cls:
+                    provider = provider_cls()
+                    artifacts = provider.deploy(node_name, dict(node_inst.config))
+                    deployments[node_name] = {
+                        "provider_id": node_type.provider,
+                        "artifacts": artifacts,
+                    }
+                    if artifacts:
+                        console.print(f"  [green]✓[/green] Deployed {node_name}: {artifacts}")
+
+            # Undeploy removed nodes
+            for node_name in plan.removed_nodes:
+                node_inst = old_process.nodes[node_name]
+                node_type = old_process.node_types[node_inst.node_type]
+                provider_cls = PROVIDER_REGISTRY.get(node_type.provider)
+                if provider_cls:
+                    provider = provider_cls()
+                    old_artifacts = old_deployments.get(node_name, {}).get("artifacts", {})
+                    provider.undeploy(node_name, dict(node_inst.config), old_artifacts)
+                    console.print(f"  [red]✓[/red] Undeployed {node_name}")
+
+        h = store.save_process(process, deployments=deployments)
+        # Load record to get the new version number
+        record = store.load_record(process_name)
+        version = record.get("version", 1) if record else 1
+        console.print(f"[bold green]✓[/bold green] Applied successfully. Version [cyan]v{version}[/cyan], hash [cyan]{h[:8]}[/cyan]")
         
     except (ParseError, ValidationError) as e:
         err_console.print(f"Error: {e}")

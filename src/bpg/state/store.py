@@ -21,6 +21,7 @@ on each apply.
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -56,11 +57,16 @@ class StateStore:
     def save_process(
         self,
         process: Process,
+        deployments: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Persist a deployed process definition.
 
         Args:
             process: The Process model to save.
+            deployments: Optional deployment artifact metadata keyed by node
+                name.  Each value is a dict with ``provider_id`` and
+                ``artifacts`` keys.  Persisted verbatim under the
+                ``deployments`` key in the record.
 
         Returns:
             SHA-256 hash of the serialized process definition.
@@ -71,21 +77,35 @@ class StateStore:
         self._ensure_dirs()
         process_name = process.metadata.name if process.metadata else "default"
         record_path = self._processes_dir / f"{process_name}.yaml"
-        
+
         # Serialize to dict using json-safe values to avoid Python-specific YAML tags (like Enums)
         # model_dump_json followed by json.loads is a reliable way to get a "pure" dict
         import json
         pure_data = json.loads(process.model_dump_json(by_alias=True, exclude_none=True))
-        
+
         # Calculate hash for change detection
         content = yaml.dump(pure_data, sort_keys=True)
         definition_hash = hashlib.sha256(content.encode()).hexdigest()
-        
+
+        # Load existing record to get the current version and increment it
+        existing_version = 0
+        if record_path.exists():
+            try:
+                with open(record_path, "r") as f:
+                    existing = yaml.safe_load(f)
+                    if existing and isinstance(existing.get("version"), int):
+                        existing_version = existing["version"]
+            except Exception:
+                pass
+
         record = {
             "hash": definition_hash,
+            "version": existing_version + 1,
+            "applied_at": datetime.now(timezone.utc).isoformat(),
             "definition": pure_data,
+            "deployments": deployments if deployments is not None else {},
         }
-        
+
         try:
             with open(record_path, "w") as f:
                 # Use safe_dump to ensure no Python-specific tags are written
@@ -103,7 +123,7 @@ class StateStore:
         record_path = self._processes_dir / f"{process_name}.yaml"
         if not record_path.exists():
             return None
-            
+
         try:
             with open(record_path, "r") as f:
                 record = yaml.safe_load(f)
@@ -112,6 +132,33 @@ class StateStore:
                 return Process.model_validate(record["definition"])
         except Exception as e:
             raise StateStoreError(f"Failed to load process {process_name}: {e}")
+
+    def load_record(self, process_name: str) -> Optional[Dict[str, Any]]:
+        """Load the full raw state record for a process by name.
+
+        Returns the complete record dict including ``hash``, ``version``,
+        ``applied_at``, ``definition``, and ``deployments``, or ``None`` if no
+        record exists for the given name.
+
+        Args:
+            process_name: The process name (used to construct the filename).
+
+        Returns:
+            The raw record dict, or ``None`` if not found.
+
+        Raises:
+            StateStoreError: On filesystem read failure.
+        """
+        record_path = self._processes_dir / f"{process_name}.yaml"
+        if not record_path.exists():
+            return None
+
+        try:
+            with open(record_path, "r") as f:
+                record = yaml.safe_load(f)
+                return record if record else None
+        except Exception as e:
+            raise StateStoreError(f"Failed to load record for {process_name}: {e}")
 
     # ------------------------------------------------------------------
     # Run state (execution records)
