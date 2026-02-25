@@ -20,8 +20,13 @@ on each apply.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+import yaml
+
+from bpg.models.schema import Process
 
 
 class StateStoreError(Exception):
@@ -33,16 +38,16 @@ class StateStore:
 
     Args:
         state_dir: Root directory for state files.  Created if absent.
-
-    Usage (once implemented)::
-
-        store = StateStore(state_dir=Path(".bpg-state"))
-        store.save_process(process_name="bug-triage", definition_hash="abc123", ir={...})
-        run_record = store.load_run(run_id="run-uuid")
     """
 
     def __init__(self, state_dir: Path) -> None:
         self._state_dir = state_dir
+        self._processes_dir = state_dir / "processes"
+        self._runs_dir = state_dir / "runs"
+
+    def _ensure_dirs(self) -> None:
+        self._processes_dir.mkdir(parents=True, exist_ok=True)
+        self._runs_dir.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
     # Process state (deployed definitions)
@@ -50,31 +55,63 @@ class StateStore:
 
     def save_process(
         self,
-        process_name: str,
-        definition_hash: str,
-        ir: Dict[str, Any],
-    ) -> None:
-        """Persist a deployed process definition and its IR hash.
+        process: Process,
+    ) -> str:
+        """Persist a deployed process definition.
 
         Args:
-            process_name: Unique name of the process.
-            definition_hash: SHA-256 hash of the serialized process definition.
-            ir: Execution Intermediate Representation dict.
+            process: The Process model to save.
+
+        Returns:
+            SHA-256 hash of the serialized process definition.
 
         Raises:
             StateStoreError: On filesystem write failure.
         """
-        # TODO: implement
-        raise NotImplementedError("StateStore.save_process not yet implemented")
+        self._ensure_dirs()
+        process_name = process.metadata.name if process.metadata else "default"
+        record_path = self._processes_dir / f"{process_name}.yaml"
+        
+        # Serialize to dict using json-safe values to avoid Python-specific YAML tags (like Enums)
+        # model_dump_json followed by json.loads is a reliable way to get a "pure" dict
+        import json
+        pure_data = json.loads(process.model_dump_json(by_alias=True, exclude_none=True))
+        
+        # Calculate hash for change detection
+        content = yaml.dump(pure_data, sort_keys=True)
+        definition_hash = hashlib.sha256(content.encode()).hexdigest()
+        
+        record = {
+            "hash": definition_hash,
+            "definition": pure_data,
+        }
+        
+        try:
+            with open(record_path, "w") as f:
+                # Use safe_dump to ensure no Python-specific tags are written
+                yaml.safe_dump(record, f, sort_keys=False)
+            return definition_hash
+        except Exception as e:
+            raise StateStoreError(f"Failed to save process {process_name}: {e}")
 
-    def load_process(self, process_name: str) -> Optional[Dict[str, Any]]:
-        """Load a deployed process record by name.
+    def load_process(self, process_name: str) -> Optional[Process]:
+        """Load a deployed process definition by name.
 
         Returns:
-            The persisted process record dict, or ``None`` if not found.
+            The Process model, or ``None`` if not found.
         """
-        # TODO: implement
-        raise NotImplementedError("StateStore.load_process not yet implemented")
+        record_path = self._processes_dir / f"{process_name}.yaml"
+        if not record_path.exists():
+            return None
+            
+        try:
+            with open(record_path, "r") as f:
+                record = yaml.safe_load(f)
+                if not record or "definition" not in record:
+                    return None
+                return Process.model_validate(record["definition"])
+        except Exception as e:
+            raise StateStoreError(f"Failed to load process {process_name}: {e}")
 
     # ------------------------------------------------------------------
     # Run state (execution records)
@@ -91,7 +128,7 @@ class StateStore:
         Raises:
             StateStoreError: If the run_id already exists.
         """
-        # TODO: implement
+        # TODO: implement in Phase 3
         raise NotImplementedError("StateStore.create_run not yet implemented")
 
     def load_run(self, run_id: str) -> Optional[Dict[str, Any]]:
@@ -100,7 +137,7 @@ class StateStore:
         Returns:
             The run record dict, or ``None`` if not found.
         """
-        # TODO: implement
+        # TODO: implement in Phase 3
         raise NotImplementedError("StateStore.load_run not yet implemented")
 
     def list_runs(self, process_name: Optional[str] = None) -> list[Dict[str, Any]]:
@@ -109,7 +146,7 @@ class StateStore:
         Returns:
             List of run record dicts sorted by start time descending.
         """
-        # TODO: implement
+        # TODO: implement in Phase 3
         raise NotImplementedError("StateStore.list_runs not yet implemented")
 
     def save_node_record(
@@ -131,7 +168,7 @@ class StateStore:
         Raises:
             StateStoreError: If the run_id does not exist.
         """
-        # TODO: implement
+        # TODO: implement in Phase 3
         raise NotImplementedError("StateStore.save_node_record not yet implemented")
 
     def load_node_record(self, run_id: str, node_name: str) -> Optional[Dict[str, Any]]:
@@ -140,5 +177,5 @@ class StateStore:
         Returns:
             The node record dict, or ``None`` if not found.
         """
-        # TODO: implement
+        # TODO: implement in Phase 3
         raise NotImplementedError("StateStore.load_node_record not yet implemented")

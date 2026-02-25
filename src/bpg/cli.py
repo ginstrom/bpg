@@ -29,6 +29,8 @@ err_console = Console(stderr=True, style="bold red")
 from bpg.compiler.parser import parse_process_file, ParseError
 from bpg.compiler.validator import validate_process, ValidationError
 from bpg.compiler.visualizer import generate_html
+from bpg.compiler.planner import Plan
+from bpg.state.store import StateStore
 
 
 @app.command()
@@ -98,14 +100,39 @@ def plan(
         process = parse_process_file(process_file)
         validate_process(process)
         
-        console.print(f"[bold green]✓[/bold green] Process [cyan]{process_file}[/cyan] is valid.")
-        console.print(f"Nodes: {len(process.nodes)}, Edges: {len(process.edges)}, Trigger: {process.trigger}")
+        process_name = process.metadata.name if process.metadata else "default"
         
-        # TODO: Implement diffing against state_dir
-        console.print(
-            f"\n[bold yellow]bpg plan[/bold yellow]: diffing against [cyan]{state_dir}[/cyan] "
-            "not yet implemented."
-        )
+        store = StateStore(state_dir)
+        old_process = store.load_process(process_name)
+        
+        plan = Plan(new_process=process, old_process=old_process)
+        
+        if plan.is_empty():
+            console.print(f"[bold green]✓[/bold green] No changes detected for process [cyan]{process_name}[/cyan].")
+            return
+
+        console.print(f"[bold yellow]Plan for process: {process_name}[/bold yellow]")
+        
+        if not old_process:
+            console.print("[green]+ New process to be created[/green]")
+        
+        if plan.trigger_changed:
+            old_trigger = old_process.trigger if old_process else "None"
+            console.print(f"[yellow]~ Trigger changed: {old_trigger} -> {process.trigger}[/yellow]")
+            
+        for node in plan.added_nodes:
+            console.print(f"[green]+ Node: {node}[/green]")
+        for node in plan.modified_nodes:
+            console.print(f"[yellow]~ Node (modified): {node}[/yellow]")
+        for node in plan.removed_nodes:
+            console.print(f"[red]- Node: {node}[/red]")
+            
+        for edge in plan.added_edges:
+            console.print(f"[green]+ Edge: {edge}[/green]")
+        for edge in plan.removed_edges:
+            console.print(f"[red]- Edge: {edge}[/red]")
+            
+        console.print("\nRun [bold]bpg apply[/bold] to deploy these changes.")
         
     except (ParseError, ValidationError) as e:
         err_console.print(f"Error: {e}")
@@ -120,7 +147,7 @@ def apply(
     process_file: Path = typer.Argument(
         ...,
         help="Path to the process definition file (e.g. process.bpg.yaml).",
-        exists=False,
+        exists=True,
     ),
     state_dir: Path = typer.Option(
         Path(".bpg-state"),
@@ -139,11 +166,45 @@ def apply(
     updated process definition, deploys provider artifacts, and persists the
     new state. Idempotent — re-applying an already-applied plan is a no-op.
     """
-    console.print(
-        f"[bold yellow]bpg apply[/bold yellow]: not yet implemented "
-        f"(file=[cyan]{process_file}[/cyan], state-dir=[cyan]{state_dir}[/cyan], "
-        f"auto-approve={auto_approve})"
-    )
+    try:
+        process = parse_process_file(process_file)
+        validate_process(process)
+        
+        process_name = process.metadata.name if process.metadata else "default"
+        store = StateStore(state_dir)
+        old_process = store.load_process(process_name)
+        
+        plan = Plan(new_process=process, old_process=old_process)
+        
+        if plan.is_empty():
+            console.print(f"[bold green]✓[/bold green] No changes to apply for [cyan]{process_name}[/cyan].")
+            return
+
+        # Show plan first
+        console.print(f"[bold yellow]Plan to apply for process: {process_name}[/bold yellow]")
+        if not old_process: console.print("[green]+ New process[/green]")
+        if plan.trigger_changed: console.print(f"[yellow]~ Trigger: {process.trigger}[/yellow]")
+        for node in plan.added_nodes: console.print(f"[green]+ Node: {node}[/green]")
+        for node in plan.modified_nodes: console.print(f"[yellow]~ Node (mod): {node}[/yellow]")
+        for node in plan.removed_nodes: console.print(f"[red]- Node: {node}[/red]")
+        for edge in plan.added_edges: console.print(f"[green]+ Edge: {edge}[/green]")
+        for edge in plan.removed_edges: console.print(f"[red]- Edge: {edge}[/red]")
+
+        if not auto_approve:
+            if not typer.confirm("\nDo you want to apply these changes?"):
+                console.print("[red]Aborted.[/red]")
+                raise typer.Exit()
+
+        # Apply = Save state for now (no runtime yet)
+        h = store.save_process(process)
+        console.print(f"[bold green]✓[/bold green] Applied successfully. Definition hash: [cyan]{h[:8]}[/cyan]")
+        
+    except (ParseError, ValidationError) as e:
+        err_console.print(f"Error: {e}")
+        raise typer.Exit(code=1)
+    except Exception as e:
+        err_console.print(f"Unexpected error: {e}")
+        raise typer.Exit(code=1)
 
 
 @app.command()
