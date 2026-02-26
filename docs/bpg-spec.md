@@ -30,6 +30,7 @@
 13. [Security & Policy](#13-security--policy)
 14. [Execution Guarantees](#14-execution-guarantees)
 15. [Future Extensions](#15-future-extensions)
+   - 15.1 [Near-Term Delivery Priorities](#151-near-term-delivery-priorities)
 16. [Full Example: Bug Triage Process](#16-full-example-bug-triage-process)
 
 ---
@@ -192,6 +193,7 @@ Providers are pluggable execution backends responsible for carrying out work on 
 | `http.gitlab` | Integration | GitLab REST API operations |
 | `queue.kafka` | Messaging | Publishes/consumes Kafka messages |
 | `timer.delay` | Control | Waits a specified duration |
+| `mock` | Testing | Deterministic canned outputs for local/system tests |
 
 #### Provider Contract
 
@@ -745,6 +747,32 @@ policy:
 
 ## 15. Future Extensions
 
+### 15.1 Near-Term Delivery Priorities
+
+To preserve the core BPG goal as a **business process as code** system with Terraform-like operator ergonomics, the following implementation priorities are in scope for the next delivery phases:
+
+1. Runtime and execution lifecycle completion
+   - Implement production `run`/`status` CLI and engine APIs with persisted run records.
+   - Enforce runtime input/output type validation at trigger and node boundaries.
+   - Ensure timeout fallback (`on_timeout.out`) continues execution for human nodes.
+   - Surface process-level failed terminal state when retries are exhausted with no failure route.
+2. State, plan/apply, and drift hardening
+   - Complete run/node persistence APIs in the state store with append-only run history semantics.
+   - Strengthen apply drift detection and persist execution IR/version pins/artifact references and checksums.
+   - Improve plan output to cover IR-level and provider-artifact deltas deterministically.
+3. Compile-time contract enforcement improvements
+   - Expand provider config validation from key presence to schema-typed validation.
+   - Enforce edge mapping completeness for required target input fields, including when `with` is omitted.
+   - Support literal mapping values beyond strings (number/bool) and keep strict reference validation.
+4. Versioning and model alignment
+   - Enforce explicit node type version contract semantics and compatibility rules.
+   - Enforce published type immutability/version-bump rules at apply boundaries.
+   - Validate process output references and nullability behavior when referenced nodes do not execute.
+5. Remaining major spec surfaces
+   - Implement module authoring/consumption model (§12).
+   - Implement policy schema + enforcement hooks for access control, SoD, PII redaction, escalation, and audit (§13).
+   - Expand end-to-end tests for runtime lifecycle, timeout continuation, failure behavior, policy, and modules.
+
 The following are planned or under consideration for future versions of the specification:
 
 | Feature | Description |
@@ -764,6 +792,7 @@ The following are planned or under consideration for future versions of the spec
 ## 16. Full Example: Bug Triage Process
 
 A complete, runnable process demonstrating most BPG features.
+These YAML examples are validated by system tests to prevent doc/spec drift.
 
 ```yaml
 # types.bpg.yaml
@@ -809,6 +838,7 @@ node_types:
     in: BugReport
     out: TriageResult
     provider: agent.pipeline
+    version: v1
     timeout_default: 5m
     config_schema:
       pipeline: string
@@ -819,6 +849,7 @@ node_types:
     in: ApprovalRequest
     out: ApprovalDecision
     provider: slack.interactive
+    version: v1
     timeout_default: 24h
     config_schema:
       channel: string
@@ -830,9 +861,20 @@ node_types:
     in: IssueRequest
     out: IssueResult
     provider: http.gitlab
+    version: v1
     config_schema:
       project_id: string
       default_labels: list<string>?
+
+  dashboard.form@v1:
+    description: "Web form provider."
+    in: BugReport
+    out: BugReport
+    provider: dashboard.form
+    version: v1
+    config_schema:
+      title: string
+      schema: string
 ```
 
 ```yaml
