@@ -431,7 +431,16 @@ class TestProviderRegistry:
         assert isinstance(provider, MockProvider)
 
     def test_registry_contains_only_expected_entries(self):
-        assert set(PROVIDER_REGISTRY.keys()) == {"mock", "http.webhook"}
+        assert set(PROVIDER_REGISTRY.keys()) == {
+            "mock",
+            "http.webhook",
+            "slack.interactive",
+            "agent.pipeline",
+            "dashboard.form",
+            "http.gitlab",
+            "timer.delay",
+            "queue.kafka",
+        }
 
 
 # ---------------------------------------------------------------------------

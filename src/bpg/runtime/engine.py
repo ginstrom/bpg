@@ -56,13 +56,60 @@ class Engine:
         Raises:
             EngineError: If the input payload fails type validation.
         """
-        # TODO: implement
-        #   1. Validate input_payload against trigger node's in type
-        #   2. Generate run_id (UUID4)
-        #   3. Persist initial run record via state_store
-        #   4. Enqueue trigger node for execution
-        #   5. Return run_id
-        raise NotImplementedError("Engine.trigger not yet implemented")
+        import uuid
+        from datetime import datetime, timezone
+        from bpg.compiler.ir import compile_process
+        from bpg.compiler.validator import validate_process
+        from bpg.providers import PROVIDER_REGISTRY
+        from bpg.runtime.langgraph_runtime import LangGraphRuntime
+
+        run_id = str(uuid.uuid4())
+        process_name = (
+            self._process.metadata.name if self._process.metadata else "default"
+        )
+
+        # Compile IR (raises ValidationError if invalid)
+        validate_process(self._process)
+        ir = compile_process(self._process)
+
+        # Persist initial run record
+        self._state_store.create_run(run_id, process_name, input_payload)
+
+        # Build providers from registry (skip any that need special init args)
+        providers: Dict[str, Any] = {}
+        for pid, cls in PROVIDER_REGISTRY.items():
+            try:
+                providers[pid] = cls()
+            except Exception:
+                pass
+
+        # Execute
+        runtime = LangGraphRuntime(ir=ir, providers=providers)
+        final_state = runtime.run(input_payload=input_payload, run_id=run_id)
+
+        # Persist per-node records from execution log
+        for entry in final_state.get("execution_log", []):
+            node_name = entry.get("node")
+            if node_name:
+                self._state_store.save_node_record(run_id, node_name, entry)
+
+        # Determine run status from final node statuses
+        from bpg.models.schema import NodeStatus
+        failed_nodes = [
+            n for n, s in final_state.get("node_statuses", {}).items()
+            if s == NodeStatus.FAILED.value
+        ]
+        failure_routes_used = set(final_state.get("failure_routes", {}).keys())
+        # Run is "failed" if any node failed without an established failure route
+        unhandled_failures = [n for n in failed_nodes if n not in failure_routes_used]
+        run_status = "failed" if unhandled_failures else "completed"
+
+        self._state_store.update_run(run_id, {
+            "status": run_status,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+        return run_id
 
     def step(self, run_id: str) -> None:
         """Advance a run by evaluating and dispatching all ready nodes.
@@ -74,13 +121,14 @@ class Engine:
         Args:
             run_id: The run to advance.
         """
-        # TODO: implement event loop step
-        raise NotImplementedError("Engine.step not yet implemented")
+        # The LangGraph runtime executes synchronously inside trigger().
+        # step() is a no-op for the synchronous runtime.
+        pass
 
     def _compute_idempotency_key(self, run_id: str, node_name: str, input_payload: Dict[str, Any]) -> str:
         """Compute the idempotency key for a node invocation.
 
         key = sha256(run_id + ":" + node_name + ":" + canonical_json(stable_input_fields))
         """
-        # TODO: implement
-        raise NotImplementedError("Engine._compute_idempotency_key not yet implemented")
+        from bpg.providers.base import compute_idempotency_key
+        return compute_idempotency_key(run_id, node_name, input_payload)

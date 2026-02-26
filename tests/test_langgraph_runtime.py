@@ -201,3 +201,161 @@ def test_failed_node_provider_error(ir):
     assert len(triage_log) == 1
     assert triage_log[0]["status"] == NodeStatus.FAILED.value
     assert "rate_limit" in triage_log[0].get("error", "")
+
+
+# ---------------------------------------------------------------------------
+# Test 4: Timeout fallback continuation (on_timeout.out)
+#   approval node times out but has on_timeout.out → run continues to gitlab
+# ---------------------------------------------------------------------------
+
+
+def test_timeout_with_on_timeout_out_continues_run(ir):
+    """Timeout with on_timeout.out: approval continues as completed with synthetic output."""
+    from bpg.providers.base import ExecutionHandle, ExecutionStatus
+
+    # triage succeeds (uses agent.pipeline), approval times out (uses slack.interactive)
+    triage_mock = MockProvider()
+    triage_mock.register_for_node("triage", {
+        "risk": "high",
+        "summary": "Critical regression",
+        "labels": ["critical"],
+        "recommended_assignee": None,
+    })
+
+    gitlab_mock = MockProvider()
+    gitlab_mock.register_for_node("gitlab", {
+        "ticket_id": "PROJ-7",
+        "url": "https://gitlab.example.com/issues/7",
+    })
+
+    class _TimeoutApprovalProvider(MockProvider):
+        """Provider that always times out — simulates a Slack approval that never arrives."""
+
+        def invoke(self, input, config, context):
+            # Return a valid handle so the runtime proceeds to await_result
+            return ExecutionHandle(
+                handle_id=context.idempotency_key,
+                idempotency_key=context.idempotency_key,
+                provider_id=self.provider_id,
+                provider_data={"status": ExecutionStatus.RUNNING},
+            )
+
+        def await_result(self, handle, timeout=None):
+            raise TimeoutError("simulated approval timeout")
+
+    timeout_approval = _TimeoutApprovalProvider()
+
+    providers = {
+        "dashboard.form": triage_mock,
+        "agent.pipeline": triage_mock,
+        "slack.interactive": timeout_approval,
+        "http.gitlab": gitlab_mock,
+    }
+
+    runtime = LangGraphRuntime(ir=ir, providers=providers)
+    final_state = runtime.run(input_payload={
+        "title": "Critical regression",
+        "severity": "S1",
+        "description": "All tests failing.",
+        "reporter_email": None,
+    })
+
+    # Approval timed out but has on_timeout.out → should be COMPLETED for routing
+    approval_status = final_state["node_statuses"].get("approval")
+    assert approval_status == NodeStatus.COMPLETED.value, (
+        f"Expected COMPLETED (synthetic), got {approval_status}"
+    )
+
+    # approval's synthetic output should be the on_timeout.out value
+    approval_output = final_state["node_outputs"].get("approval")
+    assert approval_output is not None
+    assert approval_output["approved"] is False
+
+    # The execution log should record the timeout event with synthetic=True
+    approval_log = [e for e in final_state["execution_log"] if e["node"] == "approval"]
+    assert len(approval_log) == 1
+    assert approval_log[0]["status"] == NodeStatus.TIMED_OUT.value
+    assert approval_log[0].get("synthetic") is True
+
+
+def test_timeout_without_on_timeout_out_stops_routing(ir):
+    """Timeout with no on_timeout.out: node is TIMED_OUT and downstream skipped."""
+    from bpg.providers.base import ExecutionHandle, ExecutionStatus
+
+    # triage has no on_timeout defined, so when it times out the run stops.
+    class _TimeoutTriageProvider(MockProvider):
+        """Provider that always times out — simulates a long-running agent."""
+
+        def invoke(self, input, config, context):
+            # Return a valid handle so the runtime proceeds to await_result
+            return ExecutionHandle(
+                handle_id=context.idempotency_key,
+                idempotency_key=context.idempotency_key,
+                provider_id=self.provider_id,
+                provider_data={"status": ExecutionStatus.RUNNING},
+            )
+
+        def await_result(self, handle, timeout=None):
+            raise TimeoutError("simulated triage timeout")
+
+    timeout_triage = _TimeoutTriageProvider()
+    normal_mock = MockProvider()
+
+    providers = {
+        "dashboard.form": normal_mock,
+        "agent.pipeline": timeout_triage,
+        "slack.interactive": normal_mock,
+        "http.gitlab": normal_mock,
+    }
+
+    runtime = LangGraphRuntime(ir=ir, providers=providers)
+    final_state = runtime.run(input_payload={
+        "title": "Test",
+        "severity": "S2",
+        "description": "desc",
+        "reporter_email": None,
+    })
+
+    # triage has no on_timeout, so status is TIMED_OUT
+    assert final_state["node_statuses"]["triage"] == NodeStatus.TIMED_OUT.value
+    # Downstream nodes (approval, gitlab) should be skipped since triage didn't complete
+    assert final_state["node_statuses"]["approval"] == NodeStatus.SKIPPED.value
+    assert final_state["node_statuses"]["gitlab"] == NodeStatus.SKIPPED.value
+
+
+# ---------------------------------------------------------------------------
+# Test 5: Runtime type validation
+# ---------------------------------------------------------------------------
+
+
+def test_trigger_input_validation_rejects_bad_payload(ir):
+    """Trigger input missing required field raises ValueError."""
+    runtime = LangGraphRuntime(ir=ir, providers={})
+
+    with pytest.raises(ValueError, match="Trigger input validation failed"):
+        # BugReport requires title, severity, description; omitting all
+        runtime.run(input_payload={})
+
+
+def test_node_output_validation_fails_node_on_bad_output(ir):
+    """Provider returning output that fails type validation marks node as failed."""
+    mock = MockProvider()
+    # triage returns a field that should be enum(low,med,high) but isn't
+    mock.register_for_node("triage", {
+        "risk": "INVALID_RISK",  # not in enum(low,med,high)
+        "summary": "Test",
+        "labels": [],
+        "recommended_assignee": None,
+    })
+
+    runtime = LangGraphRuntime(ir=ir, providers=_make_providers(mock))
+    final_state = runtime.run(input_payload={
+        "title": "T",
+        "severity": "S1",
+        "description": "D",
+        "reporter_email": None,
+    })
+
+    assert final_state["node_statuses"]["triage"] == NodeStatus.FAILED.value
+    triage_log = [e for e in final_state["execution_log"] if e["node"] == "triage"]
+    assert any("INVALID_RISK" in e.get("error", "") or "enum" in e.get("error", "") for e in triage_log)

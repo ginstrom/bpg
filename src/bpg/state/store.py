@@ -175,8 +175,24 @@ class StateStore:
         Raises:
             StateStoreError: If the run_id already exists.
         """
-        # TODO: implement in Phase 3
-        raise NotImplementedError("StateStore.create_run not yet implemented")
+        self._ensure_dirs()
+        run_dir = self._runs_dir / run_id
+        if run_dir.exists():
+            raise StateStoreError(f"Run {run_id} already exists")
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "nodes").mkdir(exist_ok=True)
+        record = {
+            "run_id": run_id,
+            "process_name": process_name,
+            "status": "running",
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "input": input_payload,
+        }
+        try:
+            with open(run_dir / "run.yaml", "w") as f:
+                yaml.safe_dump(record, f, sort_keys=False)
+        except Exception as e:
+            raise StateStoreError(f"Failed to create run {run_id}: {e}")
 
     def load_run(self, run_id: str) -> Optional[Dict[str, Any]]:
         """Load a run record by ID.
@@ -184,8 +200,38 @@ class StateStore:
         Returns:
             The run record dict, or ``None`` if not found.
         """
-        # TODO: implement in Phase 3
-        raise NotImplementedError("StateStore.load_run not yet implemented")
+        path = self._runs_dir / run_id / "run.yaml"
+        if not path.exists():
+            return None
+        try:
+            with open(path) as f:
+                return yaml.safe_load(f)
+        except Exception as e:
+            raise StateStoreError(f"Failed to load run {run_id}: {e}")
+
+    def update_run(self, run_id: str, updates: Dict[str, Any]) -> None:
+        """Merge updates into an existing run record.
+
+        Args:
+            run_id: The run to update.
+            updates: Dict of fields to set/overwrite.
+
+        Raises:
+            StateStoreError: If the run does not exist or write fails.
+        """
+        path = self._runs_dir / run_id / "run.yaml"
+        if not path.exists():
+            raise StateStoreError(f"Run {run_id} not found")
+        try:
+            with open(path) as f:
+                record = yaml.safe_load(f) or {}
+            record.update(updates)
+            with open(path, "w") as f:
+                yaml.safe_dump(record, f, sort_keys=False)
+        except StateStoreError:
+            raise
+        except Exception as e:
+            raise StateStoreError(f"Failed to update run {run_id}: {e}")
 
     def list_runs(self, process_name: Optional[str] = None) -> list[Dict[str, Any]]:
         """List all run records, optionally filtered by process name.
@@ -193,8 +239,25 @@ class StateStore:
         Returns:
             List of run record dicts sorted by start time descending.
         """
-        # TODO: implement in Phase 3
-        raise NotImplementedError("StateStore.list_runs not yet implemented")
+        if not self._runs_dir.exists():
+            return []
+        runs = []
+        for run_dir in self._runs_dir.iterdir():
+            if not run_dir.is_dir():
+                continue
+            path = run_dir / "run.yaml"
+            if not path.exists():
+                continue
+            try:
+                with open(path) as f:
+                    record = yaml.safe_load(f)
+                if record:
+                    if process_name is None or record.get("process_name") == process_name:
+                        runs.append(record)
+            except Exception:
+                pass
+        runs.sort(key=lambda r: r.get("started_at", ""), reverse=True)
+        return runs
 
     def save_node_record(
         self,
@@ -215,8 +278,16 @@ class StateStore:
         Raises:
             StateStoreError: If the run_id does not exist.
         """
-        # TODO: implement in Phase 3
-        raise NotImplementedError("StateStore.save_node_record not yet implemented")
+        run_dir = self._runs_dir / run_id
+        if not run_dir.exists():
+            raise StateStoreError(f"Run {run_id} does not exist")
+        nodes_dir = run_dir / "nodes"
+        nodes_dir.mkdir(exist_ok=True)
+        try:
+            with open(nodes_dir / f"{node_name}.yaml", "w") as f:
+                yaml.safe_dump(record, f, sort_keys=False)
+        except Exception as e:
+            raise StateStoreError(f"Failed to save node record {run_id}/{node_name}: {e}")
 
     def load_node_record(self, run_id: str, node_name: str) -> Optional[Dict[str, Any]]:
         """Load a single node execution record.
@@ -224,5 +295,90 @@ class StateStore:
         Returns:
             The node record dict, or ``None`` if not found.
         """
-        # TODO: implement in Phase 3
-        raise NotImplementedError("StateStore.load_node_record not yet implemented")
+        path = self._runs_dir / run_id / "nodes" / f"{node_name}.yaml"
+        if not path.exists():
+            return None
+        try:
+            with open(path) as f:
+                return yaml.safe_load(f)
+        except Exception as e:
+            raise StateStoreError(f"Failed to load node record {run_id}/{node_name}: {e}")
+
+    # ------------------------------------------------------------------
+    # Interaction state (human-in-the-loop pending/response records)
+    # ------------------------------------------------------------------
+
+    def _interaction_dir(self, idempotency_key: str) -> Path:
+        return self._state_dir / "interactions" / idempotency_key
+
+    def save_pending_interaction(self, idempotency_key: str, data: Dict[str, Any]) -> None:
+        """Persist a pending interaction record (written before NodeInterrupt).
+
+        Args:
+            idempotency_key: Pre-computed idempotency key for this invocation.
+            data: Metadata dict (run_id, node_name, process_name, channel, message_ts, …).
+
+        Raises:
+            StateStoreError: On filesystem write failure.
+        """
+        d = self._interaction_dir(idempotency_key)
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            record = {"idempotency_key": idempotency_key, "created_at": datetime.now(timezone.utc).isoformat(), **data}
+            with open(d / "pending.yaml", "w") as f:
+                yaml.safe_dump(record, f, sort_keys=False)
+        except Exception as e:
+            raise StateStoreError(f"Failed to save pending interaction {idempotency_key}: {e}")
+
+    def load_pending_interaction(self, idempotency_key: str) -> Optional[Dict[str, Any]]:
+        """Load a pending interaction record.
+
+        Returns:
+            The record dict, or ``None`` if not found.
+        """
+        path = self._interaction_dir(idempotency_key) / "pending.yaml"
+        if not path.exists():
+            return None
+        try:
+            with open(path) as f:
+                return yaml.safe_load(f)
+        except Exception as e:
+            raise StateStoreError(f"Failed to load pending interaction {idempotency_key}: {e}")
+
+    def save_interaction_response(self, idempotency_key: str, response: Dict[str, Any]) -> None:
+        """Persist the human response for a pending interaction.
+
+        Should be called by the external callback handler (e.g. Slack webhook)
+        before resuming the graph.
+
+        Args:
+            idempotency_key: Pre-computed idempotency key for this invocation.
+            response: The human response payload (e.g. ``{"approved": True}``).
+
+        Raises:
+            StateStoreError: On filesystem write failure.
+        """
+        d = self._interaction_dir(idempotency_key)
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            record = {"idempotency_key": idempotency_key, "responded_at": datetime.now(timezone.utc).isoformat(), "response": response}
+            with open(d / "response.yaml", "w") as f:
+                yaml.safe_dump(record, f, sort_keys=False)
+        except Exception as e:
+            raise StateStoreError(f"Failed to save interaction response {idempotency_key}: {e}")
+
+    def load_interaction_response(self, idempotency_key: str) -> Optional[Dict[str, Any]]:
+        """Load a human response for an interaction.
+
+        Returns:
+            The response payload dict, or ``None`` if no response yet.
+        """
+        path = self._interaction_dir(idempotency_key) / "response.yaml"
+        if not path.exists():
+            return None
+        try:
+            with open(path) as f:
+                record = yaml.safe_load(f)
+                return record.get("response") if record else None
+        except Exception as e:
+            raise StateStoreError(f"Failed to load interaction response {idempotency_key}: {e}")

@@ -13,5 +13,23 @@ The runtime implements the node execution semantics defined in §7 of the spec:
 
 from bpg.runtime.engine import Engine, EngineError
 from bpg.runtime.langgraph_runtime import LangGraphRuntime
+from bpg.runtime.observability import (
+    EventSink,
+    ListEventSink,
+    LoggingEventSink,
+    NoopEventSink,
+    RunEvent,
+    replay_run,
+)
 
-__all__ = ["Engine", "EngineError", "LangGraphRuntime"]
+__all__ = [
+    "Engine",
+    "EngineError",
+    "LangGraphRuntime",
+    "EventSink",
+    "ListEventSink",
+    "LoggingEventSink",
+    "NoopEventSink",
+    "RunEvent",
+    "replay_run",
+]

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Optional
 
 import typer
+import yaml
 from rich.console import Console
 
 app = typer.Typer(
@@ -275,17 +276,50 @@ def run(
         help="Directory where BPG state is persisted.",
     ),
 ) -> None:
-    """Trigger a new run of a deployed process with an input payload.
+    """Trigger a new run of a deployed process with an input payload."""
+    try:
+        store = StateStore(state_dir)
+        process = store.load_process(process_name)
+        if process is None:
+            err_console.print(
+                f"Process '{process_name}' not found in state. "
+                "Run 'bpg apply' first."
+            )
+            raise typer.Exit(code=1)
 
-    Creates a new process run with a unique run_id, validates the input payload
-    against the trigger node's declared input type, and begins event-driven
-    execution of the process graph.
-    """
-    console.print(
-        f"[bold yellow]bpg run[/bold yellow]: not yet implemented "
-        f"(process=[cyan]{process_name}[/cyan], input=[cyan]{input_file}[/cyan], "
-        f"state-dir=[cyan]{state_dir}[/cyan])"
-    )
+        # Load input payload
+        input_payload: dict = {}
+        if input_file is not None:
+            import json
+            content = Path(input_file).read_text()
+            if str(input_file).endswith((".yaml", ".yml")):
+                input_payload = yaml.safe_load(content) or {}
+            else:
+                input_payload = json.loads(content)
+
+        from bpg.compiler.parser import ParseError
+        from bpg.compiler.validator import ValidationError
+        from bpg.runtime.engine import Engine
+
+        engine = Engine(process=process, state_store=store)
+
+        with console.status("[bold green]Running process..."):
+            run_id = engine.trigger(input_payload)
+
+        run_record = store.load_run(run_id)
+        status_val = (run_record or {}).get("status", "unknown")
+        color = "green" if status_val == "completed" else "red"
+        console.print(
+            f"[bold {color}]✓[/bold {color}] Run [cyan]{run_id}[/cyan] "
+            f"status=[bold]{status_val}[/bold]"
+        )
+
+    except (ParseError, ValidationError) as e:
+        err_console.print(f"Error: {e}")
+        raise typer.Exit(code=1)
+    except Exception as e:
+        err_console.print(f"Error: {e}")
+        raise typer.Exit(code=1)
 
 
 @app.command()
@@ -306,18 +340,59 @@ def status(
         help="Directory where BPG state is persisted.",
     ),
 ) -> None:
-    """Show the status of in-flight or completed process runs.
+    """Show the status of in-flight or completed process runs."""
+    try:
+        store = StateStore(state_dir)
 
-    Without a run_id, displays a summary table of recent runs. With a run_id,
-    shows per-node execution status, timestamps, and any error details for that
-    specific run.
-    """
-    console.print(
-        f"[bold yellow]bpg status[/bold yellow]: not yet implemented "
-        f"(run-id=[cyan]{run_id or 'all'}[/cyan], "
-        f"process=[cyan]{process_name or 'all'}[/cyan], "
-        f"state-dir=[cyan]{state_dir}[/cyan])"
-    )
+        if run_id:
+            record = store.load_run(run_id)
+            if record is None:
+                err_console.print(f"Run '{run_id}' not found.")
+                raise typer.Exit(code=1)
+
+            status_val = record.get("status", "unknown")
+            color = "green" if status_val == "completed" else ("red" if status_val == "failed" else "yellow")
+            console.print(f"[bold]Run:[/bold]       [cyan]{run_id}[/cyan]")
+            console.print(f"[bold]Process:[/bold]   {record.get('process_name', '-')}")
+            console.print(f"[bold]Status:[/bold]    [{color}]{status_val}[/{color}]")
+            console.print(f"[bold]Started:[/bold]   {record.get('started_at', '-')}")
+            if "completed_at" in record:
+                console.print(f"[bold]Completed:[/bold] {record['completed_at']}")
+
+            # Show per-node records
+            nodes_dir = state_dir / "runs" / run_id / "nodes"
+            if nodes_dir.exists():
+                console.print("\n[bold]Node Records:[/bold]")
+                for node_file in sorted(nodes_dir.glob("*.yaml")):
+                    import yaml as _yaml
+                    node_rec = _yaml.safe_load(node_file.read_text()) or {}
+                    ns = node_rec.get("status", "unknown")
+                    nc = "green" if ns == "completed" else ("red" if ns == "failed" else "yellow")
+                    console.print(
+                        f"  [{nc}]{node_rec.get('node', node_file.stem):20s}[/{nc}] "
+                        f"{ns}"
+                    )
+        else:
+            runs = store.list_runs(process_name=process_name)
+            if not runs:
+                console.print("No runs found.")
+                return
+
+            console.print(f"{'RUN ID':<38} {'PROCESS':<28} {'STATUS':<12} STARTED")
+            console.print("-" * 90)
+            for r in runs:
+                rid = r.get("run_id", "-")
+                pname = r.get("process_name", "-")
+                st = r.get("status", "-")
+                started = r.get("started_at", "-")
+                color = "green" if st == "completed" else ("red" if st == "failed" else "yellow")
+                console.print(
+                    f"[cyan]{rid:<38}[/cyan] {pname:<28} [{color}]{st:<12}[/{color}] {started}"
+                )
+
+    except Exception as e:
+        err_console.print(f"Error: {e}")
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":
