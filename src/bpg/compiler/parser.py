@@ -74,9 +74,47 @@ def parse_process_file(path: Path) -> Process:
     Raises:
         ParseError: If the file is missing required sections or malformed.
     """
-    raw = load_yaml_file(path)
+    raw = _load_with_imports(path.resolve(), stack=[])
     try:
         return Process.model_validate(raw)
     except Exception as e:
         # Pydantic errors can be verbose; for Phase 1 we just wrap them.
         raise ParseError(f"Process validation failed: {e}", file=path)
+
+
+def _load_with_imports(path: Path, stack: list[Path]) -> Dict[str, Any]:
+    """Load YAML and recursively merge imported registries."""
+    if path in stack:
+        cycle = " -> ".join(str(p) for p in stack + [path])
+        raise ParseError(f"Import cycle detected: {cycle}", file=path)
+    raw = load_yaml_file(path)
+    imports = raw.get("imports", []) or []
+    if not isinstance(imports, list):
+        raise ParseError("'imports' must be a list of file paths", file=path)
+
+    merged: Dict[str, Dict[str, Any]] = {"types": {}, "node_types": {}, "modules": {}}
+    for import_item in imports:
+        if not isinstance(import_item, str):
+            raise ParseError("imports entries must be strings", file=path)
+        import_path = (path.parent / import_item).resolve()
+        imported_raw = _load_with_imports(import_path, stack=stack + [path])
+        for section in ("types", "node_types", "modules"):
+            imported_section = imported_raw.get(section, {}) or {}
+            if not isinstance(imported_section, dict):
+                raise ParseError(f"Imported section '{section}' must be a mapping", file=import_path)
+            for key, val in imported_section.items():
+                existing = merged[section].get(key)
+                if existing is not None and existing != val:
+                    raise ParseError(
+                        f"Conflicting imported definition for {section}.{key!r}",
+                        file=path,
+                    )
+                merged[section][key] = val
+
+    for section in ("types", "node_types", "modules"):
+        local_section = raw.get(section, {}) or {}
+        if not isinstance(local_section, dict):
+            raise ParseError(f"Section '{section}' must be a mapping", file=path)
+        if merged[section] or local_section:
+            raw[section] = {**merged[section], **local_section}
+    return raw

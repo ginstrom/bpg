@@ -16,6 +16,7 @@ Idempotency (§8):
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 from bpg.models.schema import Process
@@ -57,7 +58,6 @@ class Engine:
             EngineError: If the input payload fails type validation.
         """
         import uuid
-        from datetime import datetime, timezone
         from bpg.compiler.ir import compile_process
         from bpg.compiler.validator import validate_process
         from bpg.providers import PROVIDER_REGISTRY
@@ -67,48 +67,24 @@ class Engine:
         process_name = (
             self._process.metadata.name if self._process.metadata else "default"
         )
+        deployed_record = self._state_store.load_record(process_name)
+        process_snapshot = {
+            "process_version": (
+                (deployed_record or {}).get("process_version")
+                or (self._process.metadata.version if self._process.metadata else None)
+            ),
+            "process_hash": (deployed_record or {}).get("hash"),
+            "process_record_version": (deployed_record or {}).get("version"),
+        }
 
-        # Compile IR (raises ValidationError if invalid)
-        validate_process(self._process)
-        ir = compile_process(self._process)
-
-        # Persist initial run record
-        self._state_store.create_run(run_id, process_name, input_payload)
-
-        # Build providers from registry (skip any that need special init args)
-        providers: Dict[str, Any] = {}
-        for pid, cls in PROVIDER_REGISTRY.items():
-            try:
-                providers[pid] = cls()
-            except Exception:
-                pass
-
-        # Execute
-        runtime = LangGraphRuntime(ir=ir, providers=providers)
-        final_state = runtime.run(input_payload=input_payload, run_id=run_id)
-
-        # Persist per-node records from execution log
-        for entry in final_state.get("execution_log", []):
-            node_name = entry.get("node")
-            if node_name:
-                self._state_store.save_node_record(run_id, node_name, entry)
-
-        # Determine run status from final node statuses
-        from bpg.models.schema import NodeStatus
-        failed_nodes = [
-            n for n, s in final_state.get("node_statuses", {}).items()
-            if s == NodeStatus.FAILED.value
-        ]
-        failure_routes_used = set(final_state.get("failure_routes", {}).keys())
-        # Run is "failed" if any node failed without an established failure route
-        unhandled_failures = [n for n in failed_nodes if n not in failure_routes_used]
-        run_status = "failed" if unhandled_failures else "completed"
-
-        self._state_store.update_run(run_id, {
-            "status": run_status,
-            "completed_at": datetime.now(timezone.utc).isoformat(),
-        })
-
+        # Persist initial run record, then execute immediately.
+        self._state_store.create_run(
+            run_id,
+            process_name,
+            input_payload,
+            process_snapshot=process_snapshot,
+        )
+        self._execute_run(run_id=run_id, input_payload=input_payload)
         return run_id
 
     def step(self, run_id: str) -> None:
@@ -121,9 +97,80 @@ class Engine:
         Args:
             run_id: The run to advance.
         """
-        # The LangGraph runtime executes synchronously inside trigger().
-        # step() is a no-op for the synchronous runtime.
-        pass
+        run_record = self._state_store.load_run(run_id)
+        if run_record is None:
+            raise EngineError(f"Run {run_id!r} not found")
+
+        status = run_record.get("status", "running")
+        if status in {"completed", "failed", "cancelled"}:
+            return
+
+        input_payload = run_record.get("input", {})
+        if not isinstance(input_payload, dict):
+            raise EngineError(f"Run {run_id!r} has invalid input payload")
+
+        # Replays the run idempotently using the same run_id so provider calls
+        # can deduplicate external effects by idempotency key.
+        self._execute_run(run_id=run_id, input_payload=input_payload)
+
+    def _execute_run(self, run_id: str, input_payload: Dict[str, Any]) -> None:
+        from bpg.compiler.ir import compile_process
+        from bpg.compiler.validator import validate_process
+        from bpg.providers import PROVIDER_REGISTRY
+        from bpg.runtime.langgraph_runtime import LangGraphRuntime
+
+        # Compile IR (raises ValidationError if invalid)
+        validate_process(self._process)
+        ir = compile_process(self._process)
+
+        # Build providers from registry (skip any that need special init args)
+        providers: Dict[str, Any] = {}
+        for pid, cls in PROVIDER_REGISTRY.items():
+            try:
+                providers[pid] = cls()
+            except Exception:
+                pass
+
+        cached_results: Dict[str, Dict[str, Any]] = {}
+        for node_rec in self._state_store.list_node_records(run_id).values():
+            if node_rec.get("status") != "completed":
+                continue
+            cache_key = node_rec.get("idempotency_key")
+            cache_output = node_rec.get("output")
+            if isinstance(cache_key, str) and isinstance(cache_output, dict):
+                cached_results[cache_key] = cache_output
+
+        runtime = LangGraphRuntime(
+            ir=ir,
+            providers=providers,
+            initial_result_cache=cached_results,
+        )
+        final_state = runtime.run(input_payload=input_payload, run_id=run_id)
+
+        for entry in final_state.get("execution_log", []):
+            node_name = entry.get("node")
+            self._state_store.append_execution_event(run_id, entry)
+            if node_name:
+                self._state_store.save_node_record(run_id, node_name, entry)
+
+        run_status = final_state.get("run_status", "completed")
+        updates = {
+            "status": run_status,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if "process_output" in final_state:
+            updates["output"] = final_state["process_output"]
+        self._state_store.update_run(run_id, updates)
+        if "audit" in final_state and isinstance(final_state["audit"], dict):
+            self._state_store.apply_audit_policy(
+                run_id=run_id,
+                process_name=(
+                    self._process.metadata.name if self._process.metadata else "default"
+                ),
+                audit_record=final_state["audit"],
+                run_status=run_status,
+                execution_log=final_state.get("execution_log", []),
+            )
 
     def _compute_idempotency_key(self, run_id: str, node_name: str, input_payload: Dict[str, Any]) -> str:
         """Compute the idempotency key for a node invocation.

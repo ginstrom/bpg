@@ -72,6 +72,7 @@ class NodeType(_ImmutableModel):
     input_type: str = Field(alias="in", description="Name of the registered input TypeDef.")
     output_type: str = Field(alias="out", description="Name of the registered output TypeDef.")
     provider: str = Field(description="Provider identifier, e.g. 'agent.pipeline'.")
+    version: str = Field(description="Semantic version string.")
     config_schema: Dict[str, str] = Field(
         default_factory=dict,
         description="Schema for node instance configuration values.",
@@ -152,6 +153,14 @@ class NodeInstance(_ImmutableModel):
     )
     description: Optional[str] = Field(default=None)
     retry: Optional[RetryPolicy] = Field(default=None)
+    stable_input_fields: Optional[List[str]] = Field(
+        default=None,
+        description="Top-level input fields to include in idempotency key computation.",
+    )
+    unstable_input_fields: Optional[List[str]] = Field(
+        default=None,
+        description="Top-level input fields to exclude from idempotency key computation.",
+    )
     on_timeout: Optional[Dict[str, Any]] = Field(
         default=None,
         description="Synthetic output emitted when a human node times out.",
@@ -207,7 +216,7 @@ class Edge(_ImmutableModel):
         default=None,
         description="Boolean condition expression; edge fires unconditionally if omitted.",
     )
-    mapping: Optional[Dict[str, str]] = Field(
+    mapping: Optional[Dict[str, Any]] = Field(
         alias="with",
         default=None,
         description="Data mapping from source outputs to target inputs.",
@@ -219,6 +228,88 @@ class Edge(_ImmutableModel):
     on_failure: Optional[EdgeOnFailure] = Field(default=None)
 
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+
+
+# ---------------------------------------------------------------------------
+# Modules (§12)
+# ---------------------------------------------------------------------------
+
+class ModuleDefinition(_ImmutableModel):
+    """A reusable process fragment.
+
+    Modules define named input parameters, internal node instances, internal
+    edges, and exported outputs. They are referenced in processes as a
+    node instance type.
+
+    Example:
+        risk_routing@v1:
+          description: "Routes a triage result to either approval or direct filing."
+          inputs:
+            triage_result: TriageResult
+            reporter_email: string
+          nodes:
+            approval: { ... }
+            gitlab: { ... }
+          edges:
+            - from: __input__
+              to: approval
+              when: triage_result.risk == "high"
+          outputs:
+            ticket_id: gitlab.out.ticket_id
+          version: v1
+    """
+
+    description: Optional[str] = Field(default=None)
+    inputs: Dict[str, str] = Field(
+        description="Named input parameters and their BPG types.",
+    )
+    nodes: Dict[str, NodeInstance] = Field(
+        description="Internal node instances scoped to the module.",
+    )
+    edges: List[Edge] = Field(
+        description="Internal edges forming the module's execution graph.",
+    )
+    outputs: Dict[str, str] = Field(
+        description="Exported output mappings (name to internal field reference).",
+    )
+    version: str = Field(description="Semantic version string.")
+
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+
+
+# ---------------------------------------------------------------------------
+# Security & Policy (§13)
+# ---------------------------------------------------------------------------
+
+class AccessControlPolicy(_ImmutableModel):
+    """Restrict who may act on a human node."""
+
+    node: str
+    allowed_roles: List[str]
+
+
+class PIIRedactionPolicy(_ImmutableModel):
+    """Redact specified fields in execution logs."""
+
+    node: str
+    redact_fields: List[str]
+
+
+class AuditPolicy(_ImmutableModel):
+    """Log retention and export settings."""
+
+    retain_run_logs_for: Optional[str] = None
+    export_to: Optional[str] = None
+
+
+class Policy(_ImmutableModel):
+    """Process-level security and governance configuration."""
+
+    access_control: Optional[List[AccessControlPolicy]] = None
+    separation_of_duties: Optional[Dict[str, Any]] = None
+    pii_redaction: Optional[List[PIIRedactionPolicy]] = None
+    audit: Optional[AuditPolicy] = None
+    escalation: Optional[List[Dict[Any, Any]]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -267,6 +358,10 @@ class Process(_ImmutableModel):
     """
 
     metadata: Optional[ProcessMetadata] = None
+    imports: List[str] = Field(
+        default_factory=list,
+        description="Relative file paths providing shared types/node_types/modules.",
+    )
     types: Dict[str, TypeDef] = Field(
         default_factory=dict,
         description="Type definitions declared inline in the process file.",
@@ -274,6 +369,10 @@ class Process(_ImmutableModel):
     node_types: Dict[str, NodeType] = Field(
         default_factory=dict,
         description="Node type definitions declared inline in the process file.",
+    )
+    modules: Dict[str, ModuleDefinition] = Field(
+        default_factory=dict,
+        description="Module definitions declared inline in the process file.",
     )
     nodes: Dict[str, NodeInstance] = Field(
         description="Node instances keyed by instance name.",
@@ -288,4 +387,4 @@ class Process(_ImmutableModel):
         default=None,
         description="Field reference for the process return value, e.g. 'gitlab.out.ticket_id'.",
     )
-    policy: Optional[Dict[str, Any]] = Field(default=None)
+    policy: Optional[Policy] = Field(default=None)

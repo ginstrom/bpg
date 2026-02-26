@@ -27,9 +27,9 @@ def test_generate_html():
 def _make_process():
     return Process(
         metadata=ProcessMetadata(name="viz-test", version="1.0"),
-        types={},
+        types={"RequiredType": {"ok": "bool"}},
         node_types={
-            "worker@v1": NodeType(**{"in": "object", "out": "object", "provider": "test"}),
+            "worker@v1": NodeType(**{"in": "object", "out": "object", "provider": "test", "version": "v1"}),
         },
         nodes={
             "start": NodeInstance(**{"type": "worker@v1"}),

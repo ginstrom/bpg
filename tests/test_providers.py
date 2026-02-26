@@ -18,9 +18,18 @@ from unittest.mock import patch
 import pytest
 
 from bpg.providers import (
+    AgentPipelineProvider,
+    BpgProcessCallProvider,
+    DashboardFormProvider,
+    FlowAwaitAllProvider,
+    FlowFanoutProvider,
+    FlowLoopProvider,
+    HttpGitlabProvider,
     PROVIDER_REGISTRY,
+    QueueKafkaProvider,
     MockProvider,
     ProviderError,
+    TimerDelayProvider,
     WebhookProvider,
     compute_idempotency_key,
 )
@@ -182,6 +191,12 @@ class TestMockProvider:
         result = self.mock.await_result(handle, timeout=0.001)
         assert result == {"fast": True}
 
+    def test_await_alias_delegates_to_await_result(self):
+        self.mock.set_default({"fast": True})
+        handle = self.mock.invoke({}, {}, self.ctx)
+        result = self.mock.await_(handle, timeout=0.001)
+        assert result == {"fast": True}
+
     def test_handle_carries_idempotency_key(self):
         self.mock.set_default({"x": 1})
         handle = self.mock.invoke({}, {}, self.ctx)
@@ -280,7 +295,7 @@ class TestWebhookProviderSync:
         ctx = _ctx()
         with pytest.raises(ProviderError) as exc_info:
             self.provider.invoke({}, {}, ctx)
-        assert exc_info.value.code == "config_error"
+        assert exc_info.value.code == "invalid_config"
 
     def test_http_500_raises_retryable_error(self, sync_server):
         _SyncHandler.response_status = 500
@@ -440,7 +455,80 @@ class TestProviderRegistry:
             "http.gitlab",
             "timer.delay",
             "queue.kafka",
+            "core.passthrough",
+            "flow.loop",
+            "flow.fanout",
+            "flow.await_all",
+            "bpg.process_call",
         }
+
+
+class TestBuiltInProviders:
+    def test_agent_pipeline_returns_structured_output(self):
+        provider = AgentPipelineProvider()
+        ctx = _ctx(node_name="triage")
+        handle = provider.invoke({"title": "Login broken", "severity": "S1"}, {}, ctx)
+        out = provider.await_result(handle)
+        assert out["risk"] == "high"
+        assert out["summary"] == "Login broken"
+
+    def test_dashboard_form_merges_defaults(self):
+        provider = DashboardFormProvider()
+        ctx = _ctx(node_name="intake")
+        handle = provider.invoke({"title": "Bug"}, {"defaults": {"approved": False}}, ctx)
+        out = provider.await_result(handle)
+        assert out == {"approved": False, "title": "Bug"}
+
+    def test_http_gitlab_returns_ticket_id(self):
+        provider = HttpGitlabProvider()
+        ctx = _ctx(node_name="gitlab")
+        handle = provider.invoke({}, {"ticket_prefix": "SEC"}, ctx)
+        out = provider.await_result(handle)
+        assert out["ticket_id"].startswith("SEC-")
+        assert "url" in out
+
+    def test_queue_kafka_requires_topic(self):
+        provider = QueueKafkaProvider()
+        ctx = _ctx(node_name="publish")
+        with pytest.raises(ProviderError, match="requires a topic"):
+            provider.invoke({}, {}, ctx)
+
+    def test_timer_delay_timeout(self):
+        provider = TimerDelayProvider()
+        ctx = _ctx(node_name="wait")
+        handle = provider.invoke({}, {"duration": 1}, ctx)
+        with pytest.raises(TimeoutError):
+            provider.await_result(handle, timeout=0.01)
+
+    def test_flow_loop_applies_max_iterations(self):
+        provider = FlowLoopProvider()
+        ctx = _ctx(node_name="loop")
+        handle = provider.invoke({"items": [1, 2, 3, 4]}, {"max_iterations": 2}, ctx)
+        out = provider.await_result(handle)
+        assert out["items"] == [1, 2]
+        assert out["truncated"] is True
+
+    def test_flow_fanout_builds_branches(self):
+        provider = FlowFanoutProvider()
+        ctx = _ctx(node_name="fanout")
+        handle = provider.invoke({"items": ["a", "b"]}, {}, ctx)
+        out = provider.await_result(handle)
+        assert out["count"] == 2
+        assert out["branches"][1]["item"] == "b"
+
+    def test_flow_await_all_returns_aggregate(self):
+        provider = FlowAwaitAllProvider()
+        ctx = _ctx(node_name="await_all")
+        handle = provider.invoke({"results": [{"ok": True}, {"ok": False}]}, {}, ctx)
+        out = provider.await_result(handle)
+        assert out["count"] == 2
+        assert out["results"][0]["ok"] is True
+
+    def test_process_call_requires_process_name(self):
+        provider = BpgProcessCallProvider()
+        ctx = _ctx(node_name="call")
+        with pytest.raises(ProviderError, match="requires config.process_name"):
+            provider.invoke({}, {}, ctx)
 
 
 # ---------------------------------------------------------------------------

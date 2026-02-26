@@ -134,7 +134,7 @@ class WebhookProvider(Provider):
         poll_url = handle.provider_data.get("poll_url")
         if not poll_url:
             raise ProviderError(
-                code="config_error",
+                code="invalid_config",
                 message="poll_url is required for async webhook polling",
                 retryable=False,
             )
@@ -222,7 +222,7 @@ def _require(config: Dict[str, Any], key: str) -> str:
     value = config.get(key)
     if not value:
         raise ProviderError(
-            code="config_error",
+            code="invalid_config",
             message=f"http.webhook: required config field '{key}' is missing",
             retryable=False,
         )
@@ -259,7 +259,7 @@ def _http_post(
         ) from exc
     except urllib.error.URLError as exc:
         raise ProviderError(
-            code="connection_error",
+            code="provider_unavailable",
             message=f"POST {url} failed: {exc.reason}",
             retryable=True,
         ) from exc
@@ -280,7 +280,7 @@ def _http_get(url: str) -> Dict[str, Any]:
         ) from exc
     except urllib.error.URLError as exc:
         raise ProviderError(
-            code="connection_error",
+            code="provider_unavailable",
             message=f"GET {url} failed: {exc.reason}",
             retryable=True,
         ) from exc
@@ -299,7 +299,7 @@ def _http_delete(url: str) -> None:
         ) from exc
     except urllib.error.URLError as exc:
         raise ProviderError(
-            code="connection_error",
+            code="provider_unavailable",
             message=f"DELETE {url} failed: {exc.reason}",
             retryable=False,
         ) from exc

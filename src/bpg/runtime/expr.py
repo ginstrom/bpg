@@ -67,8 +67,10 @@ def _resolve_path(path: str, state: RunState, trigger_name: str) -> Any:
 
     Supported path forms:
     - ``<node>.out.<field>`` — look up field in ``state["node_outputs"][node]``
+    - ``<node>.out``         — return the whole output object
     - ``<node>.in.<field>``  — not produced at runtime; raise informative error
     - ``trigger.in.<field>`` — look up field in ``state["trigger_input"]``
+    - ``trigger.in``         — return the whole trigger input object
 
     Args:
         path: Dotted reference string.
@@ -82,9 +84,9 @@ def _resolve_path(path: str, state: RunState, trigger_name: str) -> Any:
         _EvalError: If the path cannot be resolved.
     """
     parts = path.split(".")
-    if len(parts) < 3:
+    if len(parts) < 2:
         raise _EvalError(
-            f"path {path!r} must have at least 3 segments (node.segment.field)"
+            f"path {path!r} must have at least 2 segments (node.segment)"
         )
 
     node_ref = parts[0]
@@ -357,7 +359,7 @@ def _coerce_literal(value: str) -> Any:
 
 
 def resolve_mapping(
-    mapping: Dict[str, str],
+    mapping: Dict[str, Any],
     state: RunState,
     trigger_name: str,
 ) -> Dict[str, Any]:
@@ -384,8 +386,12 @@ def resolve_mapping(
     return result
 
 
-def _resolve_value(raw: str, state: RunState, trigger_name: str) -> Any:
+def _resolve_value(raw: Any, state: RunState, trigger_name: str) -> Any:
     """Resolve a single mapping value to a Python object."""
+    # Non-string literals (numbers, booleans, nulls) are returned as-is
+    if not isinstance(raw, str):
+        return raw
+
     # String interpolation: contains {{ }}
     if "{{" in raw:
         def _substitute(m: re.Match) -> str:

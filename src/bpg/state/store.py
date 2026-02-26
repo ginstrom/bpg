@@ -11,6 +11,7 @@ State layout::
         runs/
             <run-id>/
                 run.yaml                 # run metadata (status, timestamps)
+                events.jsonl             # append-only execution event log
                 nodes/
                     <node-name>.yaml     # per-node execution record
 
@@ -21,6 +22,9 @@ on each apply.
 from __future__ import annotations
 
 import hashlib
+import json
+import re
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -50,19 +54,36 @@ class StateStore:
         self._processes_dir.mkdir(parents=True, exist_ok=True)
         self._runs_dir.mkdir(parents=True, exist_ok=True)
 
+    @staticmethod
+    def _artifact_checksum(artifacts: Dict[str, Any]) -> str:
+        payload = json.dumps(artifacts, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(payload.encode()).hexdigest()
+
+    @staticmethod
+    def _parse_duration_seconds(value: Optional[str]) -> Optional[float]:
+        if not value:
+            return None
+        m = re.match(r"^(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)$", value.strip())
+        if not m:
+            return None
+        amount = float(m.group(1))
+        unit = m.group(2)
+        factors = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0, "d": 86400.0}
+        return amount * factors[unit]
+
     # ------------------------------------------------------------------
     # Process state (deployed definitions)
     # ------------------------------------------------------------------
 
     def save_process(
         self,
-        process: Process,
+        ir: "ExecutionIR",
         deployments: Optional[Dict[str, Any]] = None,
     ) -> str:
-        """Persist a deployed process definition.
+        """Persist a deployed process definition and its IR artifacts.
 
         Args:
-            process: The Process model to save.
+            ir: The compiled ExecutionIR to save.
             deployments: Optional deployment artifact metadata keyed by node
                 name.  Each value is a dict with ``provider_id`` and
                 ``artifacts`` keys.  Persisted verbatim under the
@@ -75,11 +96,11 @@ class StateStore:
             StateStoreError: On filesystem write failure.
         """
         self._ensure_dirs()
+        process = ir.process
         process_name = process.metadata.name if process.metadata else "default"
         record_path = self._processes_dir / f"{process_name}.yaml"
 
         # Serialize to dict using json-safe values to avoid Python-specific YAML tags (like Enums)
-        # model_dump_json followed by json.loads is a reliable way to get a "pure" dict
         import json
         pure_data = json.loads(process.model_dump_json(by_alias=True, exclude_none=True))
 
@@ -98,12 +119,60 @@ class StateStore:
             except Exception:
                 pass
 
+        normalized_deployments: Dict[str, Any] = {}
+        for node_name, dep in (deployments or {}).items():
+            dep_copy = dict(dep)
+            artifacts = dep_copy.get("artifacts", {}) or {}
+            dep_copy["artifacts"] = artifacts
+            dep_copy["artifact_checksum"] = self._artifact_checksum(artifacts)
+            normalized_deployments[node_name] = dep_copy
+
         record = {
             "hash": definition_hash,
             "version": existing_version + 1,
             "applied_at": datetime.now(timezone.utc).isoformat(),
+            "process_version": process.metadata.version if process.metadata else None,
             "definition": pure_data,
-            "deployments": deployments if deployments is not None else {},
+            "deployments": normalized_deployments,
+            "topological_order": ir.topological_order,
+            "node_type_pins": {
+                node_name: node.node_type for node_name, node in process.nodes.items()
+            },
+            "type_pins": sorted(process.types.keys()),
+            "type_checksums": {
+                type_name: hashlib.sha256(
+                    json.dumps(
+                        type_def.root,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode()
+                ).hexdigest()
+                for type_name, type_def in process.types.items()
+            },
+            "node_type_checksums": {
+                node_type_name: hashlib.sha256(
+                    json.dumps(
+                        node_type.model_dump(by_alias=True, exclude_none=True),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode()
+                ).hexdigest()
+                for node_type_name, node_type in process.node_types.items()
+            },
+            "ir_checksum": hashlib.sha256(
+                json.dumps(
+                    {
+                        "topological_order": ir.topological_order,
+                        "resolved_nodes": sorted(ir.resolved_nodes.keys()),
+                        "resolved_edges": sorted(
+                            f"{e.source.name}->{e.target.name}:{e.edge.when or ''}"
+                            for e in ir.resolved_edges
+                        ),
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+            ).hexdigest(),
         }
 
         try:
@@ -160,11 +229,35 @@ class StateStore:
         except Exception as e:
             raise StateStoreError(f"Failed to load record for {process_name}: {e}")
 
+    def verify_artifact_checksums(self, process_name: str) -> bool:
+        """Verify persisted deployment artifact checksums for a process record."""
+        record = self.load_record(process_name)
+        if not record:
+            return True
+        deployments = record.get("deployments", {}) or {}
+        for node_name, dep in deployments.items():
+            artifacts = dep.get("artifacts", {}) or {}
+            expected = dep.get("artifact_checksum")
+            if expected is None:
+                return False
+            actual = self._artifact_checksum(artifacts)
+            if actual != expected:
+                raise StateStoreError(
+                    f"Artifact checksum mismatch for node {node_name}: expected {expected}, got {actual}"
+                )
+        return True
+
     # ------------------------------------------------------------------
     # Run state (execution records)
     # ------------------------------------------------------------------
 
-    def create_run(self, run_id: str, process_name: str, input_payload: Dict[str, Any]) -> None:
+    def create_run(
+        self,
+        run_id: str,
+        process_name: str,
+        input_payload: Dict[str, Any],
+        process_snapshot: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """Create a new run record.  Must be called before any node records.
 
         Args:
@@ -188,9 +281,12 @@ class StateStore:
             "started_at": datetime.now(timezone.utc).isoformat(),
             "input": input_payload,
         }
+        if process_snapshot:
+            record.update(process_snapshot)
         try:
             with open(run_dir / "run.yaml", "w") as f:
                 yaml.safe_dump(record, f, sort_keys=False)
+            (run_dir / "events.jsonl").touch(exist_ok=True)
         except Exception as e:
             raise StateStoreError(f"Failed to create run {run_id}: {e}")
 
@@ -267,8 +363,8 @@ class StateStore:
     ) -> None:
         """Append or update a node execution record within a run.
 
-        The store is append-only: existing records are not deleted, only updated
-        with new status fields (e.g. completed_at, output).
+        Existing snapshots are merged (append-only semantics preserved by the
+        separate per-run events log).
 
         Args:
             run_id: The run this node belongs to.
@@ -284,10 +380,45 @@ class StateStore:
         nodes_dir = run_dir / "nodes"
         nodes_dir.mkdir(exist_ok=True)
         try:
-            with open(nodes_dir / f"{node_name}.yaml", "w") as f:
-                yaml.safe_dump(record, f, sort_keys=False)
+            node_path = nodes_dir / f"{node_name}.yaml"
+            existing: Dict[str, Any] = {}
+            if node_path.exists():
+                with open(node_path) as f:
+                    existing = yaml.safe_load(f) or {}
+            merged = {**existing, **record}
+            with open(node_path, "w") as f:
+                yaml.safe_dump(merged, f, sort_keys=False)
         except Exception as e:
             raise StateStoreError(f"Failed to save node record {run_id}/{node_name}: {e}")
+
+    def append_execution_event(self, run_id: str, event: Dict[str, Any]) -> None:
+        """Append a single execution event to the immutable run event log."""
+        run_dir = self._runs_dir / run_id
+        if not run_dir.exists():
+            raise StateStoreError(f"Run {run_id} does not exist")
+        events_path = run_dir / "events.jsonl"
+        try:
+            with open(events_path, "a") as f:
+                f.write(json.dumps(event, sort_keys=True) + "\n")
+        except Exception as e:
+            raise StateStoreError(f"Failed to append execution event for run {run_id}: {e}")
+
+    def load_execution_log(self, run_id: str) -> list[Dict[str, Any]]:
+        """Load append-only execution events for a run in write order."""
+        events_path = self._runs_dir / run_id / "events.jsonl"
+        if not events_path.exists():
+            return []
+        out: list[Dict[str, Any]] = []
+        try:
+            with open(events_path) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    out.append(json.loads(line))
+            return out
+        except Exception as e:
+            raise StateStoreError(f"Failed to load execution log for run {run_id}: {e}")
 
     def load_node_record(self, run_id: str, node_name: str) -> Optional[Dict[str, Any]]:
         """Load a single node execution record.
@@ -303,6 +434,71 @@ class StateStore:
                 return yaml.safe_load(f)
         except Exception as e:
             raise StateStoreError(f"Failed to load node record {run_id}/{node_name}: {e}")
+
+    def list_node_records(self, run_id: str) -> Dict[str, Dict[str, Any]]:
+        """Load all node execution records for a run keyed by node name."""
+        nodes_dir = self._runs_dir / run_id / "nodes"
+        if not nodes_dir.exists():
+            return {}
+        records: Dict[str, Dict[str, Any]] = {}
+        for node_file in nodes_dir.glob("*.yaml"):
+            try:
+                with open(node_file) as f:
+                    rec = yaml.safe_load(f) or {}
+                records[node_file.stem] = rec
+            except Exception as e:
+                raise StateStoreError(f"Failed to load node record {run_id}/{node_file.stem}: {e}")
+        return records
+
+    def apply_audit_policy(
+        self,
+        *,
+        run_id: str,
+        process_name: str,
+        audit_record: Dict[str, Any],
+        run_status: str,
+        execution_log: list[Dict[str, Any]],
+    ) -> None:
+        """Apply retention/export policy for a completed run."""
+        retention = audit_record.get("retention")
+        export_to = audit_record.get("export_to")
+
+        retention_seconds = self._parse_duration_seconds(retention)
+        if retention_seconds is not None:
+            cutoff = datetime.now(timezone.utc).timestamp() - retention_seconds
+            for run in self.list_runs(process_name=process_name):
+                rid = run.get("run_id")
+                if not rid or rid == run_id:
+                    continue
+                started_at = run.get("started_at")
+                if not isinstance(started_at, str):
+                    continue
+                try:
+                    started_dt = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                if started_dt.timestamp() < cutoff:
+                    shutil.rmtree(self._runs_dir / rid, ignore_errors=True)
+
+        if isinstance(export_to, str) and export_to.strip():
+            if export_to.startswith("file://"):
+                path = Path(export_to[len("file://"):])
+            elif export_to.startswith("file:"):
+                path = Path(export_to[len("file:"):])
+            else:
+                safe = re.sub(r"[^a-zA-Z0-9_.-]+", "_", export_to)
+                path = self._state_dir / "exports" / f"{safe}.jsonl"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "run_id": run_id,
+                "process_name": process_name,
+                "status": run_status,
+                "exported_at": datetime.now(timezone.utc).isoformat(),
+                "audit": audit_record,
+                "execution_log": execution_log,
+            }
+            with open(path, "a") as f:
+                f.write(json.dumps(payload, sort_keys=True) + "\n")
 
     # ------------------------------------------------------------------
     # Interaction state (human-in-the-loop pending/response records)

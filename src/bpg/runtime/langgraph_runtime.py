@@ -22,6 +22,7 @@ Usage::
 from __future__ import annotations
 
 import re as _re
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -63,6 +64,7 @@ def _now_iso() -> str:
 
 _RETRY_INITIAL_DELAY_DEFAULT = 1.0   # seconds
 _RETRY_MAX_DELAY_DEFAULT = 300.0     # seconds
+_HUMAN_PROVIDER_IDS = frozenset({"slack.interactive", "dashboard.form"})
 
 
 class _RuntimeValidationError(Exception):
@@ -181,11 +183,16 @@ class LangGraphRuntime:
         providers: Dict[str, Provider],
         checkpointer=None,
         event_sink: Optional[EventSink] = None,
+        initial_result_cache: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> None:
         self._ir = ir
         self._providers = providers
         self._checkpointer = checkpointer
         self._sink: EventSink = event_sink if event_sink is not None else NoopEventSink()
+        self._result_cache: Dict[str, Dict[str, Any]] = dict(initial_result_cache or {})
+        self._cancel_events: Dict[str, threading.Event] = {}
+        self._inflight_handles: Dict[str, tuple[Provider, Any]] = {}
+        self._runtime_lock = threading.Lock()
         self._graph = self._build_graph()
 
     # ------------------------------------------------------------------
@@ -210,6 +217,142 @@ class LangGraphRuntime:
 
         return builder.compile(checkpointer=self._checkpointer)
 
+    @staticmethod
+    def _idempotency_payload(node: Any, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Return payload subset used for idempotency key computation."""
+        stable = getattr(node.instance, "stable_input_fields", None) or []
+        unstable = getattr(node.instance, "unstable_input_fields", None) or []
+        if stable:
+            return {k: payload[k] for k in stable if k in payload}
+        if unstable:
+            return {k: v for k, v in payload.items() if k not in set(unstable)}
+        return payload
+
+    @staticmethod
+    def _principal_value(
+        *,
+        field_name: str,
+        trigger_input: Dict[str, Any],
+        actor: Dict[str, Any],
+        actor_id: Any,
+        actor_roles: List[str],
+    ) -> Any:
+        if field_name == "__actor_id__":
+            return actor_id
+        if field_name == "__actor_roles__":
+            return actor_roles
+        if field_name.startswith("actor."):
+            return actor.get(field_name.split(".", 1)[1])
+        return trigger_input.get(field_name)
+
+    @staticmethod
+    def _principal_overlap(left: Any, right: Any) -> bool:
+        if left is None or right is None:
+            return False
+        if isinstance(left, list) and isinstance(right, list):
+            return bool(set(map(str, left)) & set(map(str, right)))
+        if isinstance(left, list):
+            return str(right) in {str(v) for v in left}
+        if isinstance(right, list):
+            return str(left) in {str(v) for v in right}
+        return str(left) == str(right)
+
+    @staticmethod
+    def _escalation_routes(
+        policy: Any,
+        node_name: str,
+        event_name: str,
+        attempts: int,
+        payload: Dict[str, Any],
+    ) -> Dict[str, Dict[str, Any]]:
+        routes: Dict[str, Dict[str, Any]] = {}
+        if not policy or not policy.escalation:
+            return routes
+        for rule in policy.escalation:
+            if rule.get("node") != node_name:
+                continue
+            rule_event = rule.get("on", rule.get(True))
+            if rule_event != event_name:
+                continue
+            if attempts < int(rule.get("after_attempts", 1)):
+                continue
+            target = rule.get("route_to")
+            if isinstance(target, str) and target:
+                routes[target] = payload
+        return routes
+
+    def _invoke_provider_with_isolation(
+        self,
+        *,
+        provider: Provider,
+        input_payload: Dict[str, Any],
+        config: Dict[str, Any],
+        context: ExecutionContext,
+        timeout: Optional[float],
+        cancel_event: threading.Event,
+        run_id: str,
+    ) -> tuple[Optional[Dict[str, Any]], Optional[ProviderError], bool]:
+        """Invoke provider work in a daemon thread with runtime-enforced timeout."""
+        holder: Dict[str, Any] = {"handle": None, "output": None, "error": None}
+        done = threading.Event()
+
+        def _worker() -> None:
+            try:
+                handle = provider.invoke(input_payload, config, context)
+                holder["handle"] = handle
+                with self._runtime_lock:
+                    self._inflight_handles[run_id] = (provider, handle)
+                if cancel_event.is_set():
+                    provider.cancel(handle)
+                    raise ProviderError(
+                        code="cancelled",
+                        message="Run cancelled",
+                        retryable=False,
+                    )
+                holder["output"] = provider.await_(handle, timeout=timeout)
+            except TimeoutError as exc:
+                holder["error"] = exc
+            except ProviderError as exc:
+                holder["error"] = exc
+            except Exception as exc:
+                holder["error"] = ProviderError(
+                    code="provider_unavailable",
+                    message=str(exc),
+                    retryable=False,
+                )
+            finally:
+                with self._runtime_lock:
+                    self._inflight_handles.pop(run_id, None)
+                done.set()
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+        deadline = None if timeout is None else (time.monotonic() + timeout)
+        while not done.wait(timeout=0.05):
+            if cancel_event.is_set():
+                handle = holder.get("handle")
+                if handle is not None:
+                    try:
+                        provider.cancel(handle)
+                    except Exception:
+                        pass
+                return None, ProviderError("cancelled", "Run cancelled", False), False
+            if deadline is not None and time.monotonic() >= deadline:
+                handle = holder.get("handle")
+                if handle is not None:
+                    try:
+                        provider.cancel(handle)
+                    except Exception:
+                        pass
+                return None, None, True
+
+        err = holder.get("error")
+        if isinstance(err, TimeoutError):
+            return None, None, True
+        if isinstance(err, ProviderError):
+            return None, err, False
+        return holder.get("output"), None, False
+
     # ------------------------------------------------------------------
     # Node function factory
     # ------------------------------------------------------------------
@@ -230,13 +373,31 @@ class LangGraphRuntime:
         incoming: List[ResolvedEdge] = [
             re for re in ir.resolved_edges if re.edge.target == node_name
         ]
-        is_trigger = len(incoming) == 0
+        is_trigger = node_name == ir.trigger.name
 
         resolved_node = ir.resolved_nodes[node_name]
+        policy = ir.process.policy
+
+        # Check for PII redaction policy
+        redact_fields = set()
+        if ir.process.policy and ir.process.policy.pii_redaction:
+            for pr in ir.process.policy.pii_redaction:
+                if pr.node == node_name:
+                    redact_fields.update(pr.redact_fields)
+
+        def _redact(data: Any) -> Any:
+            if not redact_fields or not isinstance(data, dict):
+                return data
+            return {
+                k: ("[REDACTED]" if k in redact_fields else v)
+                for k, v in data.items()
+            }
 
         def node_fn(state: RunState) -> dict:
             run_id: str = state["run_id"]
             process_name: str = state["process_name"]
+            with self._runtime_lock:
+                cancel_event = self._cancel_events.setdefault(run_id, threading.Event())
 
             def _base_event(**extra) -> RunEvent:
                 """Build a RunEvent with the fields common to every transition."""
@@ -249,21 +410,55 @@ class LangGraphRuntime:
                 ev.update(extra)  # type: ignore[typeddict-item]
                 return ev
 
+            if state.get("run_status") == NodeStatus.FAILED.value:
+                return {
+                    "node_outputs": {},
+                    "node_statuses": {node_name: NodeStatus.SKIPPED.value},
+                    "execution_log": [{
+                        "node": node_name,
+                        "status": NodeStatus.SKIPPED.value,
+                        "timestamp": _now_iso(),
+                    }],
+                    "failure_routes": {},
+                }
+            if state.get("run_status") == NodeStatus.CANCELLED.value or cancel_event.is_set():
+                ts = _now_iso()
+                sink.emit(_base_event(
+                    event_type="node_failed",
+                    status=NodeStatus.CANCELLED.value,
+                    error="Run cancelled",
+                    error_code="cancelled",
+                    timestamp=ts,
+                ))
+                return {
+                    "node_outputs": {},
+                    "node_statuses": {node_name: NodeStatus.CANCELLED.value},
+                    "execution_log": [{
+                        "node": node_name,
+                        "status": NodeStatus.CANCELLED.value,
+                        "timestamp": ts,
+                        "error": "Run cancelled",
+                    }],
+                    "failure_routes": {},
+                    "run_status": NodeStatus.CANCELLED.value,
+                }
+
             # ----------------------------------------------------------
-            # Trigger node: no incoming edges; pass-through trigger input
+            # Declared trigger node: pass-through trigger input
             # ----------------------------------------------------------
             if is_trigger:
                 ts = _now_iso()
+                redacted_output = _redact(state["trigger_input"])
                 log_entry = {
                     "node": node_name,
                     "status": NodeStatus.COMPLETED.value,
                     "timestamp": ts,
-                    "output": state["trigger_input"],
+                    "output": redacted_output,
                 }
                 sink.emit(_base_event(
                     event_type="node_completed",
                     status=NodeStatus.COMPLETED.value,
-                    output=state["trigger_input"],
+                    output=redacted_output,
                     timestamp=ts,
                 ))
                 return {
@@ -281,7 +476,7 @@ class LangGraphRuntime:
             # ----------------------------------------------------------
             # Check whether any incoming edge fires (skipped if failure route)
             # ----------------------------------------------------------
-            firing_edge: Optional[ResolvedEdge] = None
+            firing_edges: List[ResolvedEdge] = []
             if failure_input is None:
                 for resolved_edge in incoming:
                     src_name = resolved_edge.edge.source
@@ -302,11 +497,10 @@ class LangGraphRuntime:
                         if not condition_met:
                             continue
 
-                    firing_edge = resolved_edge
-                    break
+                    firing_edges.append(resolved_edge)
 
             # Skip if no edge fires AND no failure route
-            if firing_edge is None and failure_input is None:
+            if not firing_edges and failure_input is None:
                 ts = _now_iso()
                 log_entry = {
                     "node": node_name,
@@ -330,12 +524,40 @@ class LangGraphRuntime:
             # ----------------------------------------------------------
             if failure_input is not None:
                 input_payload = failure_input
-            elif firing_edge is not None and firing_edge.edge.mapping:
-                input_payload = resolve_mapping(
-                    firing_edge.edge.mapping, state, trigger_name
-                )
             else:
-                input_payload = {}
+                merged_mapping: Dict[str, Any] = {}
+                for edge_ref in firing_edges:
+                    edge_mapping = edge_ref.edge.mapping or {}
+                    if not edge_mapping:
+                        continue
+                    resolved = resolve_mapping(edge_mapping, state, trigger_name)
+                    for k, v in resolved.items():
+                        if k in merged_mapping and merged_mapping[k] != v:
+                            err_msg = (
+                                f"Conflicting mapping for field {k!r} from multiple incoming edges"
+                            )
+                            ts = _now_iso()
+                            log_entry = {
+                                "node": node_name,
+                                "status": NodeStatus.FAILED.value,
+                                "timestamp": ts,
+                                "error": err_msg,
+                            }
+                            sink.emit(_base_event(
+                                event_type="node_failed",
+                                status=NodeStatus.FAILED.value,
+                                error=err_msg,
+                                timestamp=ts,
+                            ))
+                            return {
+                                "node_outputs": {},
+                                "node_statuses": {node_name: NodeStatus.FAILED.value},
+                                "execution_log": [log_entry],
+                                "failure_routes": {},
+                                "run_status": NodeStatus.FAILED.value,
+                            }
+                        merged_mapping[k] = v
+                input_payload = merged_mapping
 
             # ----------------------------------------------------------
             # Validate input payload against node's in type (§7 step 4)
@@ -371,16 +593,160 @@ class LangGraphRuntime:
             # ----------------------------------------------------------
             # Determine effective timeout
             # ----------------------------------------------------------
-            edge_timeout_str = firing_edge.edge.timeout if firing_edge else None
+            edge_timeouts = [
+                _parse_duration_seconds(re.edge.timeout or "")
+                for re in firing_edges
+                if re.edge.timeout
+            ]
+            edge_timeouts = [t for t in edge_timeouts if t is not None]
             node_timeout_str = resolved_node.node_type.timeout_default
-            effective_timeout = _parse_duration_seconds(
-                edge_timeout_str or node_timeout_str or ""
-            )
+            if edge_timeouts:
+                effective_timeout = min(edge_timeouts)
+            else:
+                effective_timeout = _parse_duration_seconds(node_timeout_str or "")
+
+            # ----------------------------------------------------------
+            # Policy checks (access_control + separation_of_duties)
+            # ----------------------------------------------------------
+            provider_id = resolved_node.node_type.provider
+            actor = state["trigger_input"].get("__actor__", {})
+            actor_id = None
+            actor_roles: List[str] = []
+            if isinstance(actor, dict):
+                actor_id = actor.get("id")
+                raw_roles = actor.get("roles", [])
+                if isinstance(raw_roles, str):
+                    actor_roles = [raw_roles]
+                elif isinstance(raw_roles, list):
+                    actor_roles = [str(r) for r in raw_roles]
+            if not actor_id:
+                actor_id = state["trigger_input"].get("__actor_id__")
+            if not actor_roles:
+                raw_roles = state["trigger_input"].get("__actor_roles__", [])
+                if isinstance(raw_roles, str):
+                    actor_roles = [raw_roles]
+                elif isinstance(raw_roles, list):
+                    actor_roles = [str(r) for r in raw_roles]
+
+            if policy and provider_id in _HUMAN_PROVIDER_IDS:
+                if policy.access_control:
+                    allowed_roles = None
+                    for ac in policy.access_control:
+                        if ac.node == node_name:
+                            allowed_roles = set(ac.allowed_roles)
+                            break
+                    if allowed_roles is not None and not (set(actor_roles) & allowed_roles):
+                        ts = _now_iso()
+                        err_msg = (
+                            f"Access denied for node '{node_name}': "
+                            f"required one of roles {sorted(allowed_roles)}, got {actor_roles}"
+                        )
+                        log_entry = {
+                            "node": node_name,
+                            "status": NodeStatus.FAILED.value,
+                            "timestamp": ts,
+                            "error": err_msg,
+                        }
+                        sink.emit(_base_event(
+                            event_type="node_failed",
+                            status=NodeStatus.FAILED.value,
+                            error=err_msg,
+                            error_code="policy_access_denied",
+                            timestamp=ts,
+                        ))
+                        return {
+                            "node_outputs": {},
+                            "node_statuses": {node_name: NodeStatus.FAILED.value},
+                            "execution_log": [log_entry],
+                            "failure_routes": {},
+                            "run_status": NodeStatus.FAILED.value,
+                        }
+
+                if policy.separation_of_duties and policy.separation_of_duties.get("reporter_cannot_approve"):
+                    reporter_id = (
+                        state["trigger_input"].get("reporter_id")
+                        or state["trigger_input"].get("reporter_email")
+                    )
+                    if actor_id and reporter_id and str(actor_id) == str(reporter_id):
+                        ts = _now_iso()
+                        err_msg = (
+                            "Separation-of-duties violation: reporter and approver are the same principal"
+                        )
+                        log_entry = {
+                            "node": node_name,
+                            "status": NodeStatus.FAILED.value,
+                            "timestamp": ts,
+                            "error": err_msg,
+                        }
+                        sink.emit(_base_event(
+                            event_type="node_failed",
+                            status=NodeStatus.FAILED.value,
+                            error=err_msg,
+                            error_code="policy_separation_of_duties",
+                            timestamp=ts,
+                        ))
+                        return {
+                            "node_outputs": {},
+                            "node_statuses": {node_name: NodeStatus.FAILED.value},
+                            "execution_log": [log_entry],
+                            "failure_routes": {},
+                            "run_status": NodeStatus.FAILED.value,
+                        }
+
+                if policy.separation_of_duties:
+                    for rule in policy.separation_of_duties.get("rules", []) or []:
+                        rule_nodes = rule.get("nodes", [])
+                        if rule_nodes and node_name not in rule_nodes:
+                            continue
+                        left = self._principal_value(
+                            field_name=rule["left_principal_field"],
+                            trigger_input=state["trigger_input"],
+                            actor=actor if isinstance(actor, dict) else {},
+                            actor_id=actor_id,
+                            actor_roles=actor_roles,
+                        )
+                        right = self._principal_value(
+                            field_name=rule["right_principal_field"],
+                            trigger_input=state["trigger_input"],
+                            actor=actor if isinstance(actor, dict) else {},
+                            actor_id=actor_id,
+                            actor_roles=actor_roles,
+                        )
+                        if not self._principal_overlap(left, right):
+                            continue
+                        ts = _now_iso()
+                        err_msg = rule.get(
+                            "message",
+                            (
+                                "Separation-of-duties violation: "
+                                f"{rule['left_principal_field']} overlaps "
+                                f"{rule['right_principal_field']}"
+                            ),
+                        )
+                        log_entry = {
+                            "node": node_name,
+                            "status": NodeStatus.FAILED.value,
+                            "timestamp": ts,
+                            "error": err_msg,
+                        }
+                        sink.emit(_base_event(
+                            event_type="node_failed",
+                            status=NodeStatus.FAILED.value,
+                            error=err_msg,
+                            error_code="policy_separation_of_duties",
+                            timestamp=ts,
+                        ))
+                        return {
+                            "node_outputs": {},
+                            "node_statuses": {node_name: NodeStatus.FAILED.value},
+                            "execution_log": [log_entry],
+                            "failure_routes": {},
+                            "run_status": NodeStatus.FAILED.value,
+                        }
 
             # ----------------------------------------------------------
             # Invoke the provider
             # ----------------------------------------------------------
-            provider_id = resolved_node.node_type.provider
             provider = providers.get(provider_id)
             if provider is None:
                 err_msg = f"No provider registered for '{provider_id}'"
@@ -402,15 +768,47 @@ class LangGraphRuntime:
                     "node_statuses": {node_name: NodeStatus.FAILED.value},
                     "execution_log": [log_entry],
                     "failure_routes": {},
+                    "run_status": NodeStatus.FAILED.value,
                 }
 
-            idempotency_key = compute_idempotency_key(run_id, node_name, input_payload)
+            idempotency_payload = self._idempotency_payload(resolved_node, input_payload)
+            idempotency_key = compute_idempotency_key(run_id, node_name, idempotency_payload)
             context = ExecutionContext(
                 run_id=run_id,
                 node_name=node_name,
                 idempotency_key=idempotency_key,
                 process_name=process_name,
             )
+
+            cached_output = self._result_cache.get(idempotency_key)
+            if cached_output is not None:
+                ts = _now_iso()
+                redacted_input = _redact(input_payload)
+                redacted_output = _redact(cached_output)
+                sink.emit(_base_event(
+                    event_type="node_completed",
+                    status=NodeStatus.COMPLETED.value,
+                    input=redacted_input,
+                    output=redacted_output,
+                    idempotency_key=idempotency_key,
+                    cache_hit=True,
+                    timestamp=ts,
+                ))
+                return {
+                    "node_outputs": {node_name: cached_output},
+                    "node_statuses": {node_name: NodeStatus.COMPLETED.value},
+                    "execution_log": [{
+                        "node": node_name,
+                        "status": NodeStatus.COMPLETED.value,
+                        "timestamp": ts,
+                        "input": redacted_input,
+                        "output": redacted_output,
+                        "idempotency_key": idempotency_key,
+                        "cache_hit": True,
+                    }],
+                    "failure_routes": {},
+                    "run_status": state.get("run_status", "running"),
+                }
 
             # ----------------------------------------------------------
             # Retry loop setup
@@ -436,48 +834,82 @@ class LangGraphRuntime:
             sink.emit(_base_event(
                 event_type="node_started",
                 status=NodeStatus.RUNNING.value,
-                input=input_payload,
+                input=_redact(input_payload),
                 idempotency_key=idempotency_key,
             ))
 
             last_exc: Optional[ProviderError] = None
             output: Optional[Dict[str, Any]] = None
             timed_out = False
+            attempts_used = 0
 
             for _attempt in range(max_attempts):
-                try:
-                    handle = provider.invoke(
-                        input_payload, dict(resolved_node.instance.config), context
+                attempts_used = _attempt + 1
+                if provider_id in _HUMAN_PROVIDER_IDS and self._checkpointer is not None:
+                    try:
+                        handle = provider.invoke(
+                            input_payload, dict(resolved_node.instance.config), context
+                        )
+                        with self._runtime_lock:
+                            self._inflight_handles[run_id] = (provider, handle)
+                        if cancel_event.is_set():
+                            provider.cancel(handle)
+                            raise ProviderError(
+                                code="cancelled",
+                                message="Run cancelled",
+                                retryable=False,
+                            )
+                        output = provider.await_(handle, timeout=effective_timeout)
+                        with self._runtime_lock:
+                            self._inflight_handles.pop(run_id, None)
+                        attempt_exc = None
+                    except TimeoutError:
+                        with self._runtime_lock:
+                            self._inflight_handles.pop(run_id, None)
+                        timed_out = True
+                        attempt_exc = None
+                    except ProviderError as exc:
+                        with self._runtime_lock:
+                            self._inflight_handles.pop(run_id, None)
+                        attempt_exc = exc
+                else:
+                    output, attempt_exc, timed_out = self._invoke_provider_with_isolation(
+                        provider=provider,
+                        input_payload=input_payload,
+                        config=dict(resolved_node.instance.config),
+                        context=context,
+                        timeout=effective_timeout,
+                        cancel_event=cancel_event,
+                        run_id=run_id,
                     )
-                    output = provider.await_result(handle, timeout=effective_timeout)
+                if timed_out:
+                    break
+                if attempt_exc is None:
                     last_exc = None
                     break
-                except TimeoutError:
-                    timed_out = True
+
+                last_exc = attempt_exc
+                # Non-retryable error — stop immediately
+                if not attempt_exc.retryable:
                     break
-                except ProviderError as exc:
-                    last_exc = exc
-                    # Non-retryable error — stop immediately
-                    if not exc.retryable:
-                        break
-                    # Retryable codes filter — stop if code not in allowed set
-                    if retryable_codes and exc.code not in retryable_codes:
-                        break
-                    # More attempts remain — compute backoff and sleep
-                    if _attempt < max_attempts - 1:
-                        delay = _compute_retry_delay(
-                            _attempt, backoff_strategy, initial_delay_s, max_delay_s
-                        )
-                        sink.emit(_base_event(
-                            event_type="node_retrying",
-                            status=NodeStatus.RUNNING.value,
-                            attempt=_attempt + 1,
-                            delay_seconds=delay,
-                            error=str(exc),
-                            error_code=exc.code,
-                            idempotency_key=idempotency_key,
-                        ))
-                        time.sleep(delay)
+                # Retryable codes filter — stop if code not in allowed set
+                if retryable_codes and attempt_exc.code not in retryable_codes:
+                    break
+                # More attempts remain — compute backoff and sleep
+                if _attempt < max_attempts - 1:
+                    delay = _compute_retry_delay(
+                        _attempt, backoff_strategy, initial_delay_s, max_delay_s
+                    )
+                    sink.emit(_base_event(
+                        event_type="node_retrying",
+                        status=NodeStatus.RUNNING.value,
+                        attempt=_attempt + 1,
+                        delay_seconds=delay,
+                        error=str(attempt_exc),
+                        error_code=attempt_exc.code,
+                        idempotency_key=idempotency_key,
+                    ))
+                    time.sleep(delay)
 
             # ----------------------------------------------------------
             # Handle TimeoutError outcome
@@ -489,17 +921,20 @@ class LangGraphRuntime:
                     timeout_output = on_timeout["out"]
 
                 ts = _now_iso()
+                redacted_input = _redact(input_payload)
                 if timeout_output is not None:
                     # Spec §9: on_timeout.out continues the run; treat as completed
                     # for routing, but mark synthetic=True in the log for audit.
+                    redacted_timeout_output = _redact(timeout_output)
                     log_entry = {
                         "node": node_name,
                         "status": NodeStatus.TIMED_OUT.value,
                         "effective_status": NodeStatus.COMPLETED.value,
                         "synthetic": True,
+                        "attempts": attempts_used,
                         "timestamp": ts,
-                        "input": input_payload,
-                        "output": timeout_output,
+                        "input": redacted_input,
+                        "output": redacted_timeout_output,
                         "idempotency_key": idempotency_key,
                     }
                     sink.emit(_base_event(
@@ -507,8 +942,8 @@ class LangGraphRuntime:
                         status=NodeStatus.TIMED_OUT.value,
                         effective_status=NodeStatus.COMPLETED.value,
                         synthetic=True,
-                        input=input_payload,
-                        output=timeout_output,
+                        input=redacted_input,
+                        output=redacted_timeout_output,
                         idempotency_key=idempotency_key,
                         timestamp=ts,
                     ))
@@ -520,17 +955,25 @@ class LangGraphRuntime:
                     }
                 else:
                     # No fallback output — stop routing for this branch.
+                    escalation_routes = self._escalation_routes(
+                        policy,
+                        node_name=node_name,
+                        event_name="timeout",
+                        attempts=max_attempts,
+                        payload=input_payload,
+                    )
                     log_entry = {
                         "node": node_name,
                         "status": NodeStatus.TIMED_OUT.value,
+                        "attempts": attempts_used,
                         "timestamp": ts,
-                        "input": input_payload,
+                        "input": redacted_input,
                         "idempotency_key": idempotency_key,
                     }
                     sink.emit(_base_event(
                         event_type="node_timed_out",
                         status=NodeStatus.TIMED_OUT.value,
-                        input=input_payload,
+                        input=redacted_input,
                         idempotency_key=idempotency_key,
                         timestamp=ts,
                     ))
@@ -538,7 +981,12 @@ class LangGraphRuntime:
                         "node_outputs": {},
                         "node_statuses": {node_name: NodeStatus.TIMED_OUT.value},
                         "execution_log": [log_entry],
-                        "failure_routes": {},
+                        "failure_routes": escalation_routes,
+                        "run_status": (
+                            NodeStatus.FAILED.value
+                            if not escalation_routes
+                            else state.get("run_status", "running")
+                        ),
                     }
 
             # ----------------------------------------------------------
@@ -546,28 +994,60 @@ class LangGraphRuntime:
             # ----------------------------------------------------------
             if last_exc is not None:
                 failure_routes_update: Dict[str, Dict[str, Any]] = {}
-                if firing_edge is not None:
+                recoverable = False
+                force_fail = False
+                for firing_edge in firing_edges:
                     on_failure = firing_edge.edge.on_failure
-                    if (
-                        on_failure is not None
-                        and on_failure.action == EdgeFailureAction.ROUTE.value
-                        and on_failure.to is not None
-                    ):
+                    if on_failure is None:
+                        continue
+                    action = on_failure.action
+                    if action == EdgeFailureAction.ROUTE and on_failure.to is not None:
                         failure_routes_update[on_failure.to] = input_payload
+                        recoverable = True
+                    elif action == EdgeFailureAction.NOTIFY and on_failure.node is not None:
+                        failure_routes_update[on_failure.node] = {
+                            **input_payload,
+                            "__failure__": {
+                                "node": node_name,
+                                "code": last_exc.code,
+                                "error": str(last_exc),
+                            },
+                        }
+                        recoverable = True
+                    elif action == EdgeFailureAction.FAIL:
+                        force_fail = True
+
+                if not force_fail:
+                    escalation_routes = self._escalation_routes(
+                        policy,
+                        node_name=node_name,
+                        event_name="failure",
+                        attempts=max_attempts,
+                        payload=input_payload,
+                    )
+                    if escalation_routes:
+                        recoverable = True
+                    failure_routes_update.update(escalation_routes)
 
                 ts = _now_iso()
+                redacted_input = _redact(input_payload)
                 log_entry = {
                     "node": node_name,
-                    "status": NodeStatus.FAILED.value,
+                    "status": (
+                        NodeStatus.CANCELLED.value
+                        if last_exc.code == "cancelled"
+                        else NodeStatus.FAILED.value
+                    ),
+                    "attempts": attempts_used,
                     "timestamp": ts,
-                    "input": input_payload,
+                    "input": redacted_input,
                     "error": str(last_exc),
                     "idempotency_key": idempotency_key,
                 }
                 sink.emit(_base_event(
                     event_type="node_failed",
-                    status=NodeStatus.FAILED.value,
-                    input=input_payload,
+                    status=log_entry["status"],
+                    input=redacted_input,
                     error=str(last_exc),
                     error_code=last_exc.code,
                     idempotency_key=idempotency_key,
@@ -575,9 +1055,19 @@ class LangGraphRuntime:
                 ))
                 return {
                     "node_outputs": {},
-                    "node_statuses": {node_name: NodeStatus.FAILED.value},
+                    "node_statuses": {node_name: log_entry["status"]},
                     "execution_log": [log_entry],
                     "failure_routes": failure_routes_update,
+                    "recoverable_failures": [node_name] if recoverable else [],
+                    "run_status": (
+                        NodeStatus.CANCELLED.value
+                        if last_exc.code == "cancelled"
+                        else (
+                            NodeStatus.FAILED.value
+                            if force_fail or not failure_routes_update
+                            else state.get("run_status", "running")
+                        )
+                    ),
                 }
 
             # ----------------------------------------------------------
@@ -610,25 +1100,30 @@ class LangGraphRuntime:
                         "node_statuses": {node_name: NodeStatus.FAILED.value},
                         "execution_log": [log_entry],
                         "failure_routes": {},
+                        "run_status": NodeStatus.FAILED.value,
                     }
 
             # ----------------------------------------------------------
             # Success
             # ----------------------------------------------------------
             ts = _now_iso()
+            redacted_input = _redact(input_payload)
+            redacted_output = _redact(output)
             log_entry = {
                 "node": node_name,
                 "status": NodeStatus.COMPLETED.value,
+                "attempts": attempts_used,
                 "timestamp": ts,
-                "input": input_payload,
-                "output": output,
+                "input": redacted_input,
+                "output": redacted_output,
                 "idempotency_key": idempotency_key,
             }
+            self._result_cache[idempotency_key] = output or {}
             sink.emit(_base_event(
                 event_type="node_completed",
                 status=NodeStatus.COMPLETED.value,
-                input=input_payload,
-                output=output,
+                input=redacted_input,
+                output=redacted_output,
                 idempotency_key=idempotency_key,
                 timestamp=ts,
             ))
@@ -637,6 +1132,7 @@ class LangGraphRuntime:
                 "node_statuses": {node_name: NodeStatus.COMPLETED.value},
                 "execution_log": [log_entry],
                 "failure_routes": {},
+                "run_status": state.get("run_status", "running"),
             }
 
         return node_fn
@@ -675,12 +1171,6 @@ class LangGraphRuntime:
         # external API contract is still enforced at the boundary.
         trigger_resolved = self._ir.trigger
         effective_in_type = trigger_resolved.in_type
-        if not effective_in_type.fields:
-            # Look for the first outgoing edge target that has a structured type
-            for re in self._ir.resolved_edges:
-                if re.edge.source == trigger_resolved.name and re.target.in_type.fields:
-                    effective_in_type = re.target.in_type
-                    break
         try:
             _validate_payload(
                 input_payload,
@@ -698,11 +1188,71 @@ class LangGraphRuntime:
             "node_statuses": {},
             "execution_log": [],
             "failure_routes": {},
+            "recoverable_failures": [],
+            "run_status": "running",
         }
+        with self._runtime_lock:
+            self._cancel_events[run_id] = threading.Event()
 
         config = {"configurable": {"thread_id": run_id}}
         final_state = self._graph.invoke(initial_state, config=config)
+        if self._ir.process.output:
+            try:
+                process_output = resolve_mapping(
+                    {"__process_output__": self._ir.process.output},
+                    final_state,
+                    self._ir.process.trigger,
+                )["__process_output__"]
+            except Exception:
+                process_output = None
+            final_state["process_output"] = process_output
+        if final_state.get("run_status") == "running":
+            if NodeStatus.CANCELLED.value in final_state.get("node_statuses", {}).values():
+                final_state["run_status"] = NodeStatus.CANCELLED.value
+            elif {
+                n
+                for n, s in final_state.get("node_statuses", {}).items()
+                if s == NodeStatus.FAILED.value
+            } - set(final_state.get("recoverable_failures", [])):
+                final_state["run_status"] = NodeStatus.FAILED.value
+            else:
+                final_state["run_status"] = NodeStatus.COMPLETED.value
+        if self._ir.process.policy and self._ir.process.policy.audit:
+            audit = self._ir.process.policy.audit
+            audit_record = {
+                "retention": audit.retain_run_logs_for,
+                "export_to": audit.export_to,
+                "emitted_at": _now_iso(),
+            }
+            self._sink.emit({
+                "event_type": "run_audit",
+                "run_id": run_id,
+                "process_name": process_name,
+                "node": "__process__",
+                "timestamp": audit_record["emitted_at"],
+                "status": final_state.get("run_status", "completed"),
+            })
+            final_state["audit"] = audit_record
+        with self._runtime_lock:
+            self._cancel_events.pop(run_id, None)
+            self._inflight_handles.pop(run_id, None)
         return final_state
+
+    def cancel_run(self, run_id: str) -> bool:
+        """Request cancellation of a currently executing run.
+
+        Returns True if a run context was found and marked as cancelled.
+        """
+        with self._runtime_lock:
+            event = self._cancel_events.get(run_id)
+            if event is None:
+                return False
+            event.set()
+            inflight = self._inflight_handles.get(run_id)
+        if inflight is not None:
+            provider, handle = inflight
+            provider.cancel(handle)
+        return True
 
     def resume(
         self,

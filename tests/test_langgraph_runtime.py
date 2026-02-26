@@ -13,8 +13,11 @@ Test scenarios:
 from __future__ import annotations
 
 from pathlib import Path
+import threading
+import time
 
 import pytest
+import yaml
 
 from bpg.compiler.ir import compile_process
 from bpg.compiler.parser import parse_process_file
@@ -23,6 +26,7 @@ from bpg.models.schema import NodeStatus
 from bpg.providers.base import ProviderError
 from bpg.providers.mock import MockProvider
 from bpg.runtime.langgraph_runtime import LangGraphRuntime
+from bpg.runtime.observability import ListEventSink
 
 _PROCESS_FILE = Path("/home/ryan/play/bpg/process.bpg.yaml")
 
@@ -201,6 +205,72 @@ def test_failed_node_provider_error(ir):
     assert len(triage_log) == 1
     assert triage_log[0]["status"] == NodeStatus.FAILED.value
     assert "rate_limit" in triage_log[0].get("error", "")
+    assert final_state["run_status"] == NodeStatus.FAILED.value
+
+
+# ---------------------------------------------------------------------------
+# Test 4: Only declared trigger is pass-through
+# ---------------------------------------------------------------------------
+
+
+def test_only_declared_trigger_is_trigger_behavior(tmp_path: Path):
+    process_file = tmp_path / "process.bpg.yaml"
+    process_file.write_text(
+        """
+types:
+  In:
+    title: string
+  Out:
+    ok: bool
+node_types:
+  trigger_node@v1:
+    in: In
+    out: In
+    provider: mock
+    version: v1
+    config_schema: {}
+  worker_node@v1:
+    in: In
+    out: Out
+    provider: mock
+    version: v1
+    config_schema: {}
+nodes:
+  start:
+    type: trigger_node@v1
+    config: {}
+  orphan:
+    type: worker_node@v1
+    config: {}
+  work:
+    type: worker_node@v1
+    config: {}
+trigger: start
+edges:
+  - from: start
+    to: work
+    with:
+      title: trigger.in.title
+"""
+    )
+    process = parse_process_file(process_file)
+    validate_process(process)
+    ir = compile_process(process)
+
+    mock = MockProvider()
+    mock.register_for_node("work", {"ok": True})
+
+    runtime = LangGraphRuntime(
+        ir=ir,
+        providers={"mock": mock},
+    )
+    final_state = runtime.run(input_payload={"title": "x"})
+
+    assert final_state["node_statuses"]["start"] == NodeStatus.COMPLETED.value
+    assert final_state["node_statuses"]["orphan"] == NodeStatus.SKIPPED.value
+    assert final_state["node_statuses"]["work"] == NodeStatus.COMPLETED.value
+    orphan_calls = [c for c in mock.calls if c.node_name == "orphan"]
+    assert orphan_calls == []
 
 
 # ---------------------------------------------------------------------------
@@ -359,3 +429,904 @@ def test_node_output_validation_fails_node_on_bad_output(ir):
     assert final_state["node_statuses"]["triage"] == NodeStatus.FAILED.value
     triage_log = [e for e in final_state["execution_log"] if e["node"] == "triage"]
     assert any("INVALID_RISK" in e.get("error", "") or "enum" in e.get("error", "") for e in triage_log)
+
+
+def test_multi_incoming_edges_merge_mappings(tmp_path: Path):
+    ir = _compile_inline_process(
+        tmp_path,
+        """
+types:
+  JoinIn:
+    left: string
+    right: string
+  LeftOut:
+    left: string
+  RightOut:
+    right: string
+node_types:
+  trigger_node@v1:
+    in: object
+    out: object
+    provider: mock
+    version: v1
+    config_schema: {}
+  left_node@v1:
+    in: object
+    out: LeftOut
+    provider: mock
+    version: v1
+    config_schema: {}
+  right_node@v1:
+    in: object
+    out: RightOut
+    provider: mock
+    version: v1
+    config_schema: {}
+  join_node@v1:
+    in: JoinIn
+    out: object
+    provider: mock
+    version: v1
+    config_schema: {}
+nodes:
+  start:
+    type: trigger_node@v1
+    config: {}
+  left:
+    type: left_node@v1
+    config: {}
+  right:
+    type: right_node@v1
+    config: {}
+  join:
+    type: join_node@v1
+    config: {}
+trigger: start
+edges:
+  - from: start
+    to: left
+  - from: start
+    to: right
+  - from: left
+    to: join
+    with:
+      left: left.out.left
+  - from: right
+    to: join
+    with:
+      right: right.out.right
+""",
+    )
+    mock = MockProvider()
+    mock.register_for_node("left", {"left": "L"})
+    mock.register_for_node("right", {"right": "R"})
+    mock.register_for_node("join", {"ok": True})
+    runtime = LangGraphRuntime(ir=ir, providers={"mock": mock})
+    final_state = runtime.run(input_payload={})
+
+    assert final_state["node_statuses"]["join"] == NodeStatus.COMPLETED.value
+    join_calls = [c for c in mock.calls if c.node_name == "join"]
+    assert len(join_calls) == 1
+    assert join_calls[0].input == {"left": "L", "right": "R"}
+
+
+def test_multi_incoming_edges_conflicting_mapping_fails(tmp_path: Path):
+    ir = _compile_inline_process(
+        tmp_path,
+        """
+types:
+  JoinIn:
+    shared: string
+  OutA:
+    value: string
+  OutB:
+    value: string
+node_types:
+  trigger_node@v1:
+    in: object
+    out: object
+    provider: mock
+    version: v1
+    config_schema: {}
+  node_a@v1:
+    in: object
+    out: OutA
+    provider: mock
+    version: v1
+    config_schema: {}
+  node_b@v1:
+    in: object
+    out: OutB
+    provider: mock
+    version: v1
+    config_schema: {}
+  join_node@v1:
+    in: JoinIn
+    out: object
+    provider: mock
+    version: v1
+    config_schema: {}
+nodes:
+  start:
+    type: trigger_node@v1
+    config: {}
+  a:
+    type: node_a@v1
+    config: {}
+  b:
+    type: node_b@v1
+    config: {}
+  join:
+    type: join_node@v1
+    config: {}
+trigger: start
+edges:
+  - from: start
+    to: a
+  - from: start
+    to: b
+  - from: a
+    to: join
+    with:
+      shared: a.out.value
+  - from: b
+    to: join
+    with:
+      shared: b.out.value
+""",
+    )
+    mock = MockProvider()
+    mock.register_for_node("a", {"value": "A"})
+    mock.register_for_node("b", {"value": "B"})
+    runtime = LangGraphRuntime(ir=ir, providers={"mock": mock})
+    final_state = runtime.run(input_payload={})
+
+    assert final_state["node_statuses"]["join"] == NodeStatus.FAILED.value
+    join_calls = [c for c in mock.calls if c.node_name == "join"]
+    assert join_calls == []
+    assert "Conflicting mapping" in final_state["execution_log"][-1]["error"]
+
+
+def _compile_inline_process(tmp_path: Path, yaml_text: str):
+    path = tmp_path / "process.bpg.yaml"
+    doc = yaml.safe_load(yaml_text) or {}
+    if not doc.get("types"):
+        doc["types"] = {"_RequiredType": {"ok": "bool"}}
+    path.write_text(yaml.safe_dump(doc, sort_keys=False))
+    process = parse_process_file(path)
+    validate_process(process)
+    return compile_process(process)
+
+
+def test_access_control_policy_denies_human_node(tmp_path: Path):
+    ir = _compile_inline_process(
+        tmp_path,
+        """
+node_types:
+  trigger_node@v1:
+    in: object
+    out: object
+    provider: mock
+    version: v1
+    config_schema: {}
+  approval_node@v1:
+    in: object
+    out: object
+    provider: dashboard.form
+    version: v1
+    config_schema:
+      timeout: duration
+
+nodes:
+  start:
+    type: trigger_node@v1
+    config: {}
+  approval:
+    type: approval_node@v1
+    config:
+      timeout: 1h
+    on_timeout:
+      out: {}
+
+trigger: start
+edges:
+  - from: start
+    to: approval
+
+policy:
+  access_control:
+    - node: approval
+      allowed_roles: [engineering_lead]
+""",
+    )
+    mock = MockProvider()
+    mock.set_default({})
+    providers = {"mock": mock, "dashboard.form": mock}
+    runtime = LangGraphRuntime(ir=ir, providers=providers)
+    final_state = runtime.run(input_payload={})
+    assert final_state["node_statuses"]["approval"] == NodeStatus.FAILED.value
+    assert "Access denied" in final_state["execution_log"][-1]["error"]
+
+
+def test_separation_of_duties_blocks_same_reporter_and_actor(tmp_path: Path):
+    ir = _compile_inline_process(
+        tmp_path,
+        """
+node_types:
+  trigger_node@v1:
+    in: object
+    out: object
+    provider: mock
+    version: v1
+    config_schema: {}
+  approval_node@v1:
+    in: object
+    out: object
+    provider: dashboard.form
+    version: v1
+    config_schema:
+      timeout: duration
+
+nodes:
+  start:
+    type: trigger_node@v1
+    config: {}
+  approval:
+    type: approval_node@v1
+    config:
+      timeout: 1h
+    on_timeout:
+      out: {}
+
+trigger: start
+edges:
+  - from: start
+    to: approval
+
+policy:
+  separation_of_duties:
+    reporter_cannot_approve: true
+""",
+    )
+    mock = MockProvider()
+    mock.set_default({})
+    providers = {"mock": mock, "dashboard.form": mock}
+    runtime = LangGraphRuntime(ir=ir, providers=providers)
+    final_state = runtime.run(
+        input_payload={"reporter_email": "a@example.com", "__actor_id__": "a@example.com"}
+    )
+    assert final_state["node_statuses"]["approval"] == NodeStatus.FAILED.value
+    assert "Separation-of-duties" in final_state["execution_log"][-1]["error"]
+
+
+def test_audit_policy_emits_run_audit_event(tmp_path: Path):
+    ir = _compile_inline_process(
+        tmp_path,
+        """
+node_types:
+  trigger_node@v1:
+    in: object
+    out: object
+    provider: mock
+    version: v1
+    config_schema: {}
+
+nodes:
+  start:
+    type: trigger_node@v1
+    config: {}
+
+trigger: start
+edges: []
+
+policy:
+  audit:
+    retain_run_logs_for: 365d
+    export_to: splunk.audit_sink
+""",
+    )
+    mock = MockProvider()
+    mock.set_default({})
+    sink = ListEventSink()
+    runtime = LangGraphRuntime(ir=ir, providers={"mock": mock}, event_sink=sink)
+    final_state = runtime.run(input_payload={})
+    assert final_state["audit"]["retention"] == "365d"
+    assert final_state["audit"]["export_to"] == "splunk.audit_sink"
+    assert any(e.get("event_type") == "run_audit" for e in sink.events)
+
+
+def test_process_output_is_null_when_referenced_node_skipped(tmp_path: Path):
+    ir = _compile_inline_process(
+        tmp_path,
+        """
+types:
+  Decision:
+    approved: bool
+node_types:
+  trigger_node@v1:
+    in: object
+    out: object
+    provider: mock
+    version: v1
+    config_schema: {}
+  approval_node@v1:
+    in: object
+    out: Decision
+    provider: mock
+    version: v1
+    config_schema: {}
+
+nodes:
+  start:
+    type: trigger_node@v1
+    config: {}
+  approval:
+    type: approval_node@v1
+    config: {}
+
+trigger: start
+output: approval.out.approved
+edges:
+  - from: start
+    to: approval
+      # always false: node is skipped
+    when: start.out.__never__ == true
+""",
+    )
+    mock = MockProvider()
+    mock.set_default({})
+    runtime = LangGraphRuntime(ir=ir, providers={"mock": mock})
+    final_state = runtime.run(input_payload={})
+    assert final_state["node_statuses"]["approval"] == NodeStatus.SKIPPED.value
+    assert final_state["process_output"] is None
+
+
+def test_cancel_run_cancels_inflight_provider(tmp_path: Path):
+    from bpg.providers.base import ExecutionContext, ExecutionHandle, ExecutionStatus, Provider, ProviderError
+
+    class _BlockingProvider(Provider):
+        provider_id = "blocking.test"
+
+        def invoke(self, input, config, context: ExecutionContext):
+            return ExecutionHandle(
+                handle_id=context.idempotency_key,
+                idempotency_key=context.idempotency_key,
+                provider_id=self.provider_id,
+                provider_data={"cancelled": False, "status": ExecutionStatus.RUNNING},
+            )
+
+        def poll(self, handle):
+            return ExecutionStatus.FAILED if handle.provider_data.get("cancelled") else ExecutionStatus.RUNNING
+
+        def await_result(self, handle, timeout=None):
+            _ = timeout
+            while not handle.provider_data.get("cancelled"):
+                time.sleep(0.01)
+            raise ProviderError(code="cancelled", message="cancelled", retryable=False)
+
+        def cancel(self, handle):
+            handle.provider_data["cancelled"] = True
+            handle.provider_data["status"] = ExecutionStatus.FAILED
+
+    ir = _compile_inline_process(
+        tmp_path,
+        """
+node_types:
+  trigger_node@v1:
+    in: object
+    out: object
+    provider: mock
+    version: v1
+    config_schema: {}
+  blocking_node@v1:
+    in: object
+    out: object
+    provider: blocking.test
+    version: v1
+    config_schema: {}
+
+nodes:
+  start:
+    type: trigger_node@v1
+    config: {}
+  wait:
+    type: blocking_node@v1
+    config: {}
+
+trigger: start
+edges:
+  - from: start
+    to: wait
+""",
+    )
+    mock = MockProvider()
+    mock.set_default({})
+    runtime = LangGraphRuntime(
+        ir=ir,
+        providers={"mock": mock, "blocking.test": _BlockingProvider()},
+    )
+    result: dict = {}
+    run_id = "cancel-run-1"
+
+    def _runner():
+        result["state"] = runtime.run(input_payload={}, run_id=run_id)
+
+    t = threading.Thread(target=_runner)
+    t.start()
+    time.sleep(0.05)
+    assert runtime.cancel_run(run_id) is True
+    t.join(timeout=2.0)
+    assert not t.is_alive()
+    final_state = result["state"]
+    assert final_state["run_status"] == NodeStatus.CANCELLED.value
+    assert final_state["node_statuses"]["wait"] == NodeStatus.CANCELLED.value
+
+
+def test_blocking_invoke_still_honors_runtime_timeout(tmp_path: Path):
+    from bpg.providers.base import ExecutionContext, ExecutionHandle, ExecutionStatus, Provider
+
+    class _BlockingInvokeProvider(Provider):
+        provider_id = "blocking.invoke"
+
+        def invoke(self, input, config, context: ExecutionContext):
+            time.sleep(0.5)
+            return ExecutionHandle(
+                handle_id=context.idempotency_key,
+                idempotency_key=context.idempotency_key,
+                provider_id=self.provider_id,
+                provider_data={"status": ExecutionStatus.RUNNING},
+            )
+
+        def poll(self, handle):
+            return ExecutionStatus.RUNNING
+
+        def await_result(self, handle, timeout=None):
+            _ = timeout
+            return {"ok": True}
+
+        def cancel(self, handle):
+            handle.provider_data["status"] = ExecutionStatus.FAILED
+
+    ir = _compile_inline_process(
+        tmp_path,
+        """
+types:
+  WaitOut:
+    ok: bool
+node_types:
+  trigger_node@v1:
+    in: object
+    out: object
+    provider: mock
+    version: v1
+    config_schema: {}
+  wait_node@v1:
+    in: object
+    out: WaitOut
+    provider: blocking.invoke
+    version: v1
+    config_schema: {}
+    timeout_default: 100ms
+
+nodes:
+  start:
+    type: trigger_node@v1
+    config: {}
+  wait:
+    type: wait_node@v1
+    config: {}
+
+trigger: start
+edges:
+  - from: start
+    to: wait
+""",
+    )
+    mock = MockProvider()
+    mock.set_default({})
+    runtime = LangGraphRuntime(
+        ir=ir,
+        providers={"mock": mock, "blocking.invoke": _BlockingInvokeProvider()},
+    )
+    t0 = time.time()
+    final_state = runtime.run(input_payload={})
+    elapsed = time.time() - t0
+    assert elapsed < 0.4
+    assert final_state["node_statuses"]["wait"] == NodeStatus.TIMED_OUT.value
+    assert final_state["run_status"] == NodeStatus.FAILED.value
+
+
+def test_runtime_result_cache_avoids_duplicate_provider_invocation(tmp_path: Path):
+    ir = _compile_inline_process(
+        tmp_path,
+        """
+types:
+  Out:
+    ok: bool
+node_types:
+  trigger_node@v1:
+    in: object
+    out: object
+    provider: mock
+    version: v1
+    config_schema: {}
+  work_node@v1:
+    in: object
+    out: Out
+    provider: mock
+    version: v1
+    config_schema: {}
+
+nodes:
+  start:
+    type: trigger_node@v1
+    config: {}
+  work:
+    type: work_node@v1
+    config: {}
+
+trigger: start
+edges:
+  - from: start
+    to: work
+""",
+    )
+    mock = MockProvider()
+    mock.set_default({"ok": True})
+    runtime = LangGraphRuntime(ir=ir, providers={"mock": mock})
+    run_id = "cache-run-1"
+    runtime.run(input_payload={"a": 1}, run_id=run_id)
+    runtime.run(input_payload={"a": 1}, run_id=run_id)
+    work_calls = [c for c in mock.calls if c.node_name == "work"]
+    assert len(work_calls) == 1
+
+
+def test_unstable_input_fields_excluded_from_idempotency_key(tmp_path: Path):
+    ir = _compile_inline_process(
+        tmp_path,
+        """
+types:
+  Out:
+    ok: bool
+node_types:
+  trigger_node@v1:
+    in: object
+    out: object
+    provider: mock
+    version: v1
+    config_schema: {}
+  work_node@v1:
+    in: object
+    out: Out
+    provider: mock
+    version: v1
+    config_schema: {}
+
+nodes:
+  start:
+    type: trigger_node@v1
+    config: {}
+  work:
+    type: work_node@v1
+    unstable_input_fields: [timestamp]
+    config: {}
+
+trigger: start
+edges:
+  - from: start
+    to: work
+    with:
+      timestamp: trigger.out.timestamp
+      id: trigger.out.id
+""",
+    )
+    mock = MockProvider()
+    mock.set_default({"ok": True})
+    runtime = LangGraphRuntime(ir=ir, providers={"mock": mock})
+    run_id = "cache-run-unstable"
+    runtime.run(input_payload={"timestamp": "2026-01-01T00:00:00Z", "id": "1"}, run_id=run_id)
+    runtime.run(input_payload={"timestamp": "2026-01-02T00:00:00Z", "id": "1"}, run_id=run_id)
+    work_calls = [c for c in mock.calls if c.node_name == "work"]
+    assert len(work_calls) == 1
+
+
+def test_advanced_separation_of_duties_rule_blocks_role_overlap(tmp_path: Path):
+    ir = _compile_inline_process(
+        tmp_path,
+        """
+node_types:
+  trigger_node@v1:
+    in: object
+    out: object
+    provider: mock
+    version: v1
+    config_schema: {}
+  approval_node@v1:
+    in: object
+    out: object
+    provider: dashboard.form
+    version: v1
+    config_schema:
+      timeout: duration
+
+nodes:
+  start:
+    type: trigger_node@v1
+    config: {}
+  approval:
+    type: approval_node@v1
+    config:
+      timeout: 1h
+    on_timeout:
+      out: {}
+
+trigger: start
+edges:
+  - from: start
+    to: approval
+policy:
+  separation_of_duties:
+    rules:
+      - left_principal_field: __actor_roles__
+        right_principal_field: restricted_roles
+        nodes: [approval]
+""",
+    )
+    mock = MockProvider()
+    mock.set_default({})
+    runtime = LangGraphRuntime(ir=ir, providers={"mock": mock, "dashboard.form": mock})
+    final_state = runtime.run(
+        input_payload={
+            "restricted_roles": ["approver", "admin"],
+            "__actor_roles__": ["developer", "approver"],
+        }
+    )
+    assert final_state["node_statuses"]["approval"] == NodeStatus.FAILED.value
+    assert "Separation-of-duties" in final_state["execution_log"][-1]["error"]
+
+
+def test_edge_on_failure_route_recovers_run(tmp_path: Path):
+    ir = _compile_inline_process(
+        tmp_path,
+        """
+node_types:
+  trigger_node@v1:
+    in: object
+    out: object
+    provider: mock
+    version: v1
+    config_schema: {}
+  work_node@v1:
+    in: object
+    out: object
+    provider: mock
+    version: v1
+    config_schema: {}
+  recovery_node@v1:
+    in: object
+    out: object
+    provider: mock
+    version: v1
+    config_schema: {}
+nodes:
+  start:
+    type: trigger_node@v1
+    config: {}
+  work:
+    type: work_node@v1
+    config: {}
+  recovery:
+    type: recovery_node@v1
+    config: {}
+trigger: start
+edges:
+  - from: start
+    to: work
+    on_failure:
+      action: route
+      to: recovery
+  - from: work
+    to: recovery
+    when: "false"
+""",
+    )
+    mock = MockProvider()
+    mock.register_error("work", ProviderError("boom", "fail work", retryable=False))
+    mock.register_for_node("recovery", {"ok": True})
+    runtime = LangGraphRuntime(ir=ir, providers={"mock": mock})
+    final_state = runtime.run(input_payload={})
+
+    assert final_state["node_statuses"]["work"] == NodeStatus.FAILED.value
+    assert final_state["node_statuses"]["recovery"] == NodeStatus.COMPLETED.value
+    assert final_state["run_status"] == NodeStatus.COMPLETED.value
+
+
+def test_edge_on_failure_notify_routes_to_notification_node(tmp_path: Path):
+    ir = _compile_inline_process(
+        tmp_path,
+        """
+node_types:
+  trigger_node@v1:
+    in: object
+    out: object
+    provider: mock
+    version: v1
+    config_schema: {}
+  work_node@v1:
+    in: object
+    out: object
+    provider: mock
+    version: v1
+    config_schema: {}
+  notify_node@v1:
+    in: object
+    out: object
+    provider: mock
+    version: v1
+    config_schema: {}
+nodes:
+  start:
+    type: trigger_node@v1
+    config: {}
+  work:
+    type: work_node@v1
+    config: {}
+  notify:
+    type: notify_node@v1
+    config: {}
+trigger: start
+edges:
+  - from: start
+    to: work
+    on_failure:
+      action: notify
+      node: notify
+  - from: work
+    to: notify
+    when: "false"
+""",
+    )
+    mock = MockProvider()
+    mock.register_error("work", ProviderError("boom", "fail work", retryable=False))
+    mock.register_for_node("notify", {"sent": True})
+    runtime = LangGraphRuntime(ir=ir, providers={"mock": mock})
+    final_state = runtime.run(input_payload={})
+
+    assert final_state["node_statuses"]["work"] == NodeStatus.FAILED.value
+    assert final_state["node_statuses"]["notify"] == NodeStatus.COMPLETED.value
+    assert final_state["run_status"] == NodeStatus.COMPLETED.value
+    notify_calls = [c for c in mock.calls if c.node_name == "notify"]
+    assert len(notify_calls) == 1
+    assert notify_calls[0].input["__failure__"]["node"] == "work"
+
+
+def test_edge_on_failure_fail_sets_terminal_failed(tmp_path: Path):
+    ir = _compile_inline_process(
+        tmp_path,
+        """
+node_types:
+  trigger_node@v1:
+    in: object
+    out: object
+    provider: mock
+    version: v1
+    config_schema: {}
+  work_node@v1:
+    in: object
+    out: object
+    provider: mock
+    version: v1
+    config_schema: {}
+  recovery_node@v1:
+    in: object
+    out: object
+    provider: mock
+    version: v1
+    config_schema: {}
+nodes:
+  start:
+    type: trigger_node@v1
+    config: {}
+  work:
+    type: work_node@v1
+    config: {}
+  recovery:
+    type: recovery_node@v1
+    config: {}
+trigger: start
+edges:
+  - from: start
+    to: work
+    on_failure:
+      action: fail
+""",
+    )
+    mock = MockProvider()
+    mock.register_error("work", ProviderError("boom", "fail work", retryable=False))
+    mock.register_for_node("recovery", {"ok": True})
+    runtime = LangGraphRuntime(ir=ir, providers={"mock": mock})
+    final_state = runtime.run(input_payload={})
+
+    assert final_state["node_statuses"]["work"] == NodeStatus.FAILED.value
+    assert final_state["node_statuses"]["recovery"] == NodeStatus.SKIPPED.value
+    assert final_state["run_status"] == NodeStatus.FAILED.value
+
+
+def test_escalation_policy_routes_on_timeout(tmp_path: Path):
+    from bpg.providers.base import ExecutionHandle, ExecutionStatus
+
+    class _TimeoutProvider(MockProvider):
+        def invoke(self, input, config, context):
+            return ExecutionHandle(
+                handle_id=context.idempotency_key,
+                idempotency_key=context.idempotency_key,
+                provider_id=self.provider_id,
+                provider_data={"status": ExecutionStatus.RUNNING},
+            )
+
+        def await_result(self, handle, timeout=None):
+            raise TimeoutError("timeout")
+
+    ir = _compile_inline_process(
+        tmp_path,
+        """
+types:
+  Out:
+    ok: bool
+node_types:
+  trigger_node@v1:
+    in: object
+    out: object
+    provider: mock
+    version: v1
+    config_schema: {}
+  wait_node@v1:
+    in: object
+    out: Out
+    provider: timeout.mock
+    version: v1
+    config_schema: {}
+    timeout_default: 50ms
+  recovery_node@v1:
+    in: object
+    out: Out
+    provider: mock
+    version: v1
+    config_schema: {}
+
+nodes:
+  start:
+    type: trigger_node@v1
+    config: {}
+  wait:
+    type: wait_node@v1
+    config: {}
+  recovery:
+    type: recovery_node@v1
+    config: {}
+
+trigger: start
+edges:
+  - from: start
+    to: wait
+  - from: wait
+    to: recovery
+policy:
+  escalation:
+    - node: wait
+      on: timeout
+      after_attempts: 1
+      route_to: recovery
+""",
+    )
+    timeout_mock = _TimeoutProvider()
+    normal_mock = MockProvider()
+    normal_mock.set_default({"ok": True})
+    runtime = LangGraphRuntime(
+        ir=ir,
+        providers={"mock": normal_mock, "timeout.mock": timeout_mock},
+    )
+    final_state = runtime.run(input_payload={})
+    assert final_state["node_statuses"]["wait"] == NodeStatus.TIMED_OUT.value
+    assert final_state["node_statuses"]["recovery"] == NodeStatus.COMPLETED.value
+    assert final_state["run_status"] == NodeStatus.COMPLETED.value

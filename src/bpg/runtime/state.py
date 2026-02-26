@@ -29,3 +29,5 @@ class RunState(TypedDict):
     node_statuses: Annotated[Dict[str, str], _merge_dicts]
     execution_log: Annotated[List[Dict[str, Any]], operator.add]
     failure_routes: Annotated[Dict[str, Dict[str, Any]], _merge_dicts]
+    recoverable_failures: Annotated[List[str], operator.add]
+    run_status: str

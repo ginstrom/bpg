@@ -35,6 +35,64 @@ from bpg.compiler.planner import Plan
 from bpg.state.store import StateStore
 
 
+def _print_plan(process_name: str, process, plan: Plan, old_process=None) -> None:
+    """Render a deterministic plan view with graph + IR + artifact previews."""
+    console.print(f"[bold yellow]Plan for process: {process_name}[/bold yellow]")
+    if old_process is None:
+        console.print("[green]+ New process[/green]")
+
+    if plan.is_empty():
+        console.print("[bold green]✓[/bold green] No changes detected.")
+        return
+
+    if plan.trigger_changed:
+        old_trigger = old_process.trigger if old_process else "None"
+        console.print(f"[yellow]~ Trigger[/yellow] {old_trigger} -> {process.trigger}")
+
+    for node in plan.added_nodes:
+        console.print(f"[green]+ Node[/green] {node}")
+    for node in plan.modified_nodes:
+        console.print(f"[yellow]~ Node[/yellow] {node}")
+    for node in plan.removed_nodes:
+        console.print(f"[red]- Node[/red] {node}")
+    for edge in plan.added_edges:
+        console.print(f"[green]+ Edge[/green] {edge}")
+    for edge in plan.removed_edges:
+        console.print(f"[red]- Edge[/red] {edge}")
+
+    old_ir = plan.old_ir
+    new_ir = plan.new_ir
+    console.print("\n[bold]IR Delta[/bold]")
+    if old_ir is None:
+        console.print(
+            f"  nodes: 0 -> {len(new_ir.resolved_nodes)}, edges: 0 -> {len(new_ir.resolved_edges)}"
+        )
+    else:
+        console.print(
+            "  nodes: "
+            f"{len(old_ir.resolved_nodes)} -> {len(new_ir.resolved_nodes)}, "
+            "edges: "
+            f"{len(old_ir.resolved_edges)} -> {len(new_ir.resolved_edges)}"
+        )
+    topo_preview = ", ".join(new_ir.topological_order[:6])
+    if len(new_ir.topological_order) > 6:
+        topo_preview += ", ..."
+    console.print(f"  topo: [{topo_preview}]")
+
+    console.print("\n[bold]Artifact Preview[/bold]")
+    if not (plan.added_nodes or plan.modified_nodes or plan.removed_nodes):
+        console.print("  (no provider artifact changes)")
+    for node_name in plan.added_nodes + plan.modified_nodes:
+        node_inst = process.nodes[node_name]
+        node_type = process.node_types[node_inst.node_type]
+        config_keys = sorted(node_inst.config.keys())
+        console.print(
+            f"  [green]{node_name}[/green] provider={node_type.provider} config_keys={config_keys}"
+        )
+    for node_name in plan.removed_nodes:
+        console.print(f"  [red]{node_name}[/red] provider artifacts will be removed")
+
+
 @app.command()
 def visualize(
     process_file: Path = typer.Argument(
@@ -108,33 +166,16 @@ def plan(
         store = StateStore(state_dir)
         old_process = store.load_process(process_name)
         
-        plan = Plan(new_process=process, old_process=old_process)
+        ir = compile_process(process)
+        old_ir = compile_process(old_process) if old_process else None
+        
+        plan = Plan(new_ir=ir, old_ir=old_ir)
         
         if plan.is_empty():
             console.print(f"[bold green]✓[/bold green] No changes detected for process [cyan]{process_name}[/cyan].")
             return
 
-        console.print(f"[bold yellow]Plan for process: {process_name}[/bold yellow]")
-        
-        if not old_process:
-            console.print("[green]+ New process to be created[/green]")
-        
-        if plan.trigger_changed:
-            old_trigger = old_process.trigger if old_process else "None"
-            console.print(f"[yellow]~ Trigger changed: {old_trigger} -> {process.trigger}[/yellow]")
-            
-        for node in plan.added_nodes:
-            console.print(f"[green]+ Node: {node}[/green]")
-        for node in plan.modified_nodes:
-            console.print(f"[yellow]~ Node (modified): {node}[/yellow]")
-        for node in plan.removed_nodes:
-            console.print(f"[red]- Node: {node}[/red]")
-            
-        for edge in plan.added_edges:
-            console.print(f"[green]+ Edge: {edge}[/green]")
-        for edge in plan.removed_edges:
-            console.print(f"[red]- Edge: {edge}[/red]")
-            
+        _print_plan(process_name, process, plan, old_process=old_process)
         console.print("\nRun [bold]bpg apply[/bold] to deploy these changes.")
         
     except (ParseError, ValidationError) as e:
@@ -179,21 +220,17 @@ def apply(
         old_record = store.load_record(process_name)
         plan_state_hash = (old_record or {}).get("hash")
 
-        plan = Plan(new_process=process, old_process=old_process)
+        ir = compile_process(process)
+        old_ir = compile_process(old_process) if old_process else None
+
+        plan = Plan(new_ir=ir, old_ir=old_ir)
         
         if plan.is_empty():
             console.print(f"[bold green]✓[/bold green] No changes to apply for [cyan]{process_name}[/cyan].")
             return
 
         # Show plan first
-        console.print(f"[bold yellow]Plan to apply for process: {process_name}[/bold yellow]")
-        if not old_process: console.print("[green]+ New process[/green]")
-        if plan.trigger_changed: console.print(f"[yellow]~ Trigger: {process.trigger}[/yellow]")
-        for node in plan.added_nodes: console.print(f"[green]+ Node: {node}[/green]")
-        for node in plan.modified_nodes: console.print(f"[yellow]~ Node (mod): {node}[/yellow]")
-        for node in plan.removed_nodes: console.print(f"[red]- Node: {node}[/red]")
-        for edge in plan.added_edges: console.print(f"[green]+ Edge: {edge}[/green]")
-        for edge in plan.removed_edges: console.print(f"[red]- Edge: {edge}[/red]")
+        _print_plan(process_name, process, plan, old_process=old_process)
 
         if not auto_approve:
             if not typer.confirm("\nDo you want to apply these changes?"):
@@ -208,13 +245,19 @@ def apply(
                 "Re-run 'bpg plan' before applying."
             )
             raise typer.Exit(code=1)
+        if current_record and not store.verify_artifact_checksums(process_name):
+            err_console.print(
+                f"State for '{process_name}' has invalid artifact checksums. "
+                "Re-run 'bpg apply' after resolving drift."
+            )
+            raise typer.Exit(code=1)
 
         from bpg.providers import PROVIDER_REGISTRY
 
         # Use freshest record for undeploy artifacts
         old_deployments = (current_record or {}).get("deployments", {})
 
-        deployments: dict = {}
+        deployments: dict = dict(old_deployments)
 
         # Deploy added/modified nodes
         with console.status("[bold green]Deploying provider artifacts..."):
@@ -241,9 +284,10 @@ def apply(
                     provider = provider_cls()
                     old_artifacts = old_deployments.get(node_name, {}).get("artifacts", {})
                     provider.undeploy(node_name, dict(node_inst.config), old_artifacts)
+                    deployments.pop(node_name, None)
                     console.print(f"  [red]✓[/red] Undeployed {node_name}")
 
-        h = store.save_process(process, deployments=deployments)
+        h = store.save_process(ir, deployments=deployments)
         # Load record to get the new version number
         record = store.load_record(process_name)
         version = record.get("version", 1) if record else 1
@@ -368,9 +412,17 @@ def status(
                     node_rec = _yaml.safe_load(node_file.read_text()) or {}
                     ns = node_rec.get("status", "unknown")
                     nc = "green" if ns == "completed" else ("red" if ns == "failed" else "yellow")
+                    attempts = node_rec.get("attempts")
+                    error = node_rec.get("error")
+                    details = []
+                    if attempts is not None:
+                        details.append(f"attempts={attempts}")
+                    if error:
+                        details.append(f"error={error}")
+                    suffix = f" ({', '.join(details)})" if details else ""
                     console.print(
                         f"  [{nc}]{node_rec.get('node', node_file.stem):20s}[/{nc}] "
-                        f"{ns}"
+                        f"{ns}{suffix}"
                     )
         else:
             runs = store.list_runs(process_name=process_name)

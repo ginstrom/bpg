@@ -36,6 +36,7 @@ node_types:
     in: BugReport
     out: TriageResult
     provider: agent.pipeline
+    version: v1
     timeout_default: 5m
     config_schema:
       pipeline: string
@@ -46,6 +47,7 @@ node_types:
     in: ApprovalRequest
     out: ApprovalDecision
     provider: slack.interactive
+    version: v1
     timeout_default: 24h
     config_schema:
       channel: string
@@ -57,15 +59,17 @@ node_types:
     in: IssueRequest
     out: IssueResult
     provider: http.gitlab
+    version: v1
     config_schema:
       project_id: string
       default_labels: list<string>?
 
   dashboard.form@v1:
     description: "Web form provider"
-    in: object
-    out: object
+    in: BugReport
+    out: BugReport
     provider: dashboard.form
+    version: v1
     config_schema:
       title: string
       schema: string

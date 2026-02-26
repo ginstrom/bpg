@@ -4,7 +4,7 @@ Every provider MUST implement:
 
     invoke(input, config, context) -> ExecutionHandle
     poll(handle)                   -> ExecutionStatus
-    await_result(handle, timeout)  -> TypedOutput
+    await_(handle, timeout)        -> TypedOutput
     cancel(handle)                 -> None
 
 Idempotency (§8)
@@ -163,7 +163,7 @@ class Provider(ABC):
     ---------
     1. Engine calls ``compute_idempotency_key`` and builds ``ExecutionContext``.
     2. Engine calls ``provider.invoke(input, config, context)`` → handle.
-    3. Engine calls ``provider.poll(handle)`` or ``provider.await_result(handle)``
+    3. Engine calls ``provider.poll(handle)`` or ``provider.await_(handle)``
        to get the output.
     4. On cancellation, engine calls ``provider.cancel(handle)``.
 
@@ -232,6 +232,19 @@ class Provider(ABC):
             ProviderError: If the execution failed.
             TimeoutError: If ``timeout`` is exceeded before completion.
         """
+
+    def await_(
+        self,
+        handle: ExecutionHandle,
+        timeout: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Spec-aligned alias for awaiting provider completion.
+
+        Python reserves ``await`` as a keyword, so the provider contract uses
+        ``await_`` as the canonical callable name while preserving
+        ``await_result`` for backward compatibility.
+        """
+        return self.await_result(handle, timeout=timeout)
 
     @abstractmethod
     def cancel(self, handle: ExecutionHandle) -> None:
