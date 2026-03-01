@@ -3,6 +3,10 @@
 ## What BPG Does
 BPG (Business Process Graph) lets you define typed workflow graphs in YAML, preview deployment changes (`plan`), package deployable artifacts (`package`), deploy them (`apply`), and execute them (`run`/`status`) with persisted state and run logs.
 
+## Documentation Map
+- Node authoring and built-ins: [nodes/README.md](nodes/README.md)
+- Full system spec: [../docs/bpg-spec.md](../docs/bpg-spec.md)
+
 ## Prerequisites
 - Python 3.12+
 - `uv`
