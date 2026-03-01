@@ -261,6 +261,15 @@ class Provider(ABC):
             ProviderError: If the cancel request cannot be delivered.
         """
 
+    def packaging_requirements(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Return package-generation dependency hints.
+
+        Override to declare internal services and env vars needed for local
+        compose bundles.
+        """
+        _ = config
+        return {"services": [], "required_env": [], "optional_env": []}
+
     def deploy(
         self,
         node_name: str,

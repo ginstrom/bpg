@@ -45,12 +45,16 @@ from bpg.providers.builtin import (
     AgentPipelineProvider,
     BpgProcessCallProvider,
     DashboardFormProvider,
+    EmailNotifyProvider,
     FlowAwaitAllProvider,
     FlowFanoutProvider,
     FlowLoopProvider,
     HttpGitlabProvider,
+    ParseTextNumbersProvider,
     QueueKafkaProvider,
+    SumNumbersProvider,
     TimerDelayProvider,
+    WebSearchProvider,
 )
 
 
@@ -66,6 +70,7 @@ __all__ = [
     "SlackInteractiveProvider",
     "AgentPipelineProvider",
     "DashboardFormProvider",
+    "EmailNotifyProvider",
     "HttpGitlabProvider",
     "QueueKafkaProvider",
     "TimerDelayProvider",
@@ -73,6 +78,9 @@ __all__ = [
     "FlowFanoutProvider",
     "FlowAwaitAllProvider",
     "BpgProcessCallProvider",
+    "ParseTextNumbersProvider",
+    "SumNumbersProvider",
+    "WebSearchProvider",
     "PROVIDER_REGISTRY",
 ]
 
@@ -90,6 +98,10 @@ PROVIDER_REGISTRY: dict[str, type[Provider]] = {
     FlowFanoutProvider.provider_id: FlowFanoutProvider,
     FlowAwaitAllProvider.provider_id: FlowAwaitAllProvider,
     BpgProcessCallProvider.provider_id: BpgProcessCallProvider,
+    ParseTextNumbersProvider.provider_id: ParseTextNumbersProvider,
+    SumNumbersProvider.provider_id: SumNumbersProvider,
+    WebSearchProvider.provider_id: WebSearchProvider,
+    EmailNotifyProvider.provider_id: EmailNotifyProvider,
 }
 """Maps provider ID strings to their implementation classes.
 

@@ -7,7 +7,13 @@ self-contained, so processes can run locally without custom integrations.
 from __future__ import annotations
 
 import hashlib
+import os
+import re
+import smtplib
 import time
+import urllib.parse
+import urllib.request
+from email.message import EmailMessage
 from typing import Any, Dict, Optional
 
 from bpg.providers.base import (
@@ -17,6 +23,19 @@ from bpg.providers.base import (
     Provider,
     ProviderError,
 )
+
+
+def _is_dry_run(config: Dict[str, Any]) -> bool:
+    raw = config.get("dry_run")
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+    mode = os.getenv("BPG_EXECUTION_MODE", "").strip().lower()
+    if mode in {"dry-run", "dry_run"}:
+        return True
+    return os.getenv("BPG_DRY_RUN", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 class AgentPipelineProvider(Provider):
@@ -175,6 +194,14 @@ class HttpGitlabProvider(Provider):
     def cancel(self, handle: ExecutionHandle) -> None:
         handle.provider_data["cancelled"] = True
         handle.provider_data["status"] = ExecutionStatus.FAILED
+
+    def packaging_requirements(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        _ = config
+        return {
+            "services": [],
+            "required_env": ["GITLAB_TOKEN"],
+            "optional_env": ["GITLAB_BASE_URL"],
+        }
 
 
 class QueueKafkaProvider(Provider):
@@ -490,3 +517,378 @@ class BpgProcessCallProvider(Provider):
 
     def cancel(self, handle: ExecutionHandle) -> None:
         handle.provider_data["status"] = ExecutionStatus.FAILED
+
+
+class ParseTextNumbersProvider(Provider):
+    """`text.parse_numbers` provider.
+
+    Extracts numeric tokens from ``input.text`` and returns them as a list.
+    """
+
+    provider_id = "text.parse_numbers"
+    _NUMBER_RE = re.compile(r"[-+]?\d+(?:\.\d+)?")
+
+    def invoke(
+        self,
+        input: Dict[str, Any],
+        config: Dict[str, Any],
+        context: ExecutionContext,
+    ) -> ExecutionHandle:
+        _ = config
+        text = input.get("text")
+        if not isinstance(text, str):
+            raise ProviderError(
+                code="invalid_input",
+                message="text.parse_numbers requires input.text string",
+                retryable=False,
+            )
+
+        matches = self._NUMBER_RE.findall(text)
+        numbers: list[float] = [float(token) for token in matches]
+        output = {"numbers": numbers}
+        return ExecutionHandle(
+            handle_id=context.idempotency_key,
+            idempotency_key=context.idempotency_key,
+            provider_id=self.provider_id,
+            provider_data={"status": ExecutionStatus.COMPLETED, "output": output},
+        )
+
+    def poll(self, handle: ExecutionHandle) -> ExecutionStatus:
+        return handle.provider_data.get("status", ExecutionStatus.COMPLETED)
+
+    def await_result(
+        self, handle: ExecutionHandle, timeout: Optional[float] = None
+    ) -> Dict[str, Any]:
+        _ = timeout
+        return dict(handle.provider_data.get("output", {}))
+
+    def cancel(self, handle: ExecutionHandle) -> None:
+        handle.provider_data["status"] = ExecutionStatus.FAILED
+
+
+class SumNumbersProvider(Provider):
+    """`math.sum_numbers` provider.
+
+    Sums ``input.numbers`` and returns ``sum`` plus ``count``.
+    """
+
+    provider_id = "math.sum_numbers"
+
+    def invoke(
+        self,
+        input: Dict[str, Any],
+        config: Dict[str, Any],
+        context: ExecutionContext,
+    ) -> ExecutionHandle:
+        _ = config
+        numbers = input.get("numbers")
+        if not isinstance(numbers, list):
+            raise ProviderError(
+                code="invalid_input",
+                message="math.sum_numbers requires input.numbers list",
+                retryable=False,
+            )
+        for idx, value in enumerate(numbers):
+            if not isinstance(value, (int, float)):
+                raise ProviderError(
+                    code="invalid_input",
+                    message=f"math.sum_numbers input.numbers[{idx}] must be numeric",
+                    retryable=False,
+                )
+        total = float(sum(numbers))
+        output = {"sum": total, "count": len(numbers)}
+        return ExecutionHandle(
+            handle_id=context.idempotency_key,
+            idempotency_key=context.idempotency_key,
+            provider_id=self.provider_id,
+            provider_data={"status": ExecutionStatus.COMPLETED, "output": output},
+        )
+
+    def poll(self, handle: ExecutionHandle) -> ExecutionStatus:
+        return handle.provider_data.get("status", ExecutionStatus.COMPLETED)
+
+    def await_result(
+        self, handle: ExecutionHandle, timeout: Optional[float] = None
+    ) -> Dict[str, Any]:
+        _ = timeout
+        return dict(handle.provider_data.get("output", {}))
+
+    def cancel(self, handle: ExecutionHandle) -> None:
+        handle.provider_data["status"] = ExecutionStatus.FAILED
+
+
+class WebSearchProvider(Provider):
+    """`tool.web_search` provider.
+
+    Dry run:
+    - Returns deterministic placeholder results without external calls.
+    Live mode:
+    - Calls a configurable HTTP endpoint and normalizes JSON search results.
+    """
+
+    provider_id = "tool.web_search"
+
+    def invoke(
+        self,
+        input: Dict[str, Any],
+        config: Dict[str, Any],
+        context: ExecutionContext,
+    ) -> ExecutionHandle:
+        query = input.get("query")
+        if not isinstance(query, str) or not query.strip():
+            raise ProviderError(
+                code="invalid_input",
+                message="tool.web_search requires input.query string",
+                retryable=False,
+            )
+
+        top_k_raw = config.get("top_k", input.get("top_k", 5))
+        try:
+            top_k = max(1, int(top_k_raw))
+        except (TypeError, ValueError):
+            raise ProviderError(
+                code="invalid_config",
+                message="tool.web_search top_k must be an integer",
+                retryable=False,
+            )
+
+        if _is_dry_run(config):
+            results = []
+            for idx in range(top_k):
+                n = idx + 1
+                results.append({
+                    "title": f"Dry-run result {n} for: {query}",
+                    "url": f"https://example.invalid/search/{n}",
+                    "snippet": f"Synthetic search result {n} for query '{query}'.",
+                })
+            output = {"query": query, "results": results, "source": "dry-run"}
+        else:
+            endpoint = config.get("endpoint") or os.getenv("WEB_SEARCH_ENDPOINT")
+            if not isinstance(endpoint, str) or not endpoint.strip():
+                raise ProviderError(
+                    code="invalid_config",
+                    message="tool.web_search requires config.endpoint or WEB_SEARCH_ENDPOINT in live mode",
+                    retryable=False,
+                )
+
+            api_key_env = str(config.get("api_key_env", "WEB_SEARCH_API_KEY"))
+            require_api_key = bool(config.get("require_api_key", True))
+            api_key = os.getenv(api_key_env)
+            if require_api_key and not api_key:
+                raise ProviderError(
+                    code="invalid_config",
+                    message=f"tool.web_search missing required env {api_key_env}",
+                    retryable=False,
+                )
+
+            timeout = float(config.get("timeout_seconds", 10))
+            params = {"q": query, "k": str(top_k)}
+            req_url = f"{endpoint}?{urllib.parse.urlencode(params)}"
+            headers = {"Accept": "application/json"}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+            req = urllib.request.Request(req_url, headers=headers, method="GET")
+            try:
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    payload = resp.read().decode("utf-8")
+            except Exception as exc:
+                raise ProviderError(
+                    code="web_search_http_error",
+                    message=str(exc),
+                    retryable=True,
+                )
+
+            import json
+
+            try:
+                parsed = json.loads(payload)
+            except json.JSONDecodeError as exc:
+                raise ProviderError(
+                    code="web_search_invalid_json",
+                    message=str(exc),
+                    retryable=False,
+                )
+
+            raw_results = parsed.get("results") if isinstance(parsed, dict) else parsed
+            if not isinstance(raw_results, list):
+                raise ProviderError(
+                    code="web_search_invalid_response",
+                    message="tool.web_search expected response list or {results: [...]}",
+                    retryable=False,
+                )
+            results = []
+            for item in raw_results[:top_k]:
+                if not isinstance(item, dict):
+                    continue
+                results.append({
+                    "title": str(item.get("title", "")),
+                    "url": str(item.get("url", "")),
+                    "snippet": str(item.get("snippet", item.get("description", ""))),
+                })
+            output = {"query": query, "results": results, "source": endpoint}
+
+        return ExecutionHandle(
+            handle_id=context.idempotency_key,
+            idempotency_key=context.idempotency_key,
+            provider_id=self.provider_id,
+            provider_data={"status": ExecutionStatus.COMPLETED, "output": output},
+        )
+
+    def poll(self, handle: ExecutionHandle) -> ExecutionStatus:
+        return handle.provider_data.get("status", ExecutionStatus.COMPLETED)
+
+    def await_result(
+        self, handle: ExecutionHandle, timeout: Optional[float] = None
+    ) -> Dict[str, Any]:
+        _ = timeout
+        return dict(handle.provider_data.get("output", {}))
+
+    def cancel(self, handle: ExecutionHandle) -> None:
+        handle.provider_data["status"] = ExecutionStatus.FAILED
+
+    def packaging_requirements(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        if _is_dry_run(config):
+            return {
+                "services": [],
+                "required_env": [],
+                "optional_env": ["WEB_SEARCH_ENDPOINT", "WEB_SEARCH_API_KEY"],
+            }
+        api_key_env = str(config.get("api_key_env", "WEB_SEARCH_API_KEY"))
+        require_api_key = bool(config.get("require_api_key", True))
+        required = [api_key_env] if require_api_key else []
+        optional = [] if require_api_key else [api_key_env]
+        optional.append("WEB_SEARCH_ENDPOINT")
+        return {"services": [], "required_env": required, "optional_env": optional}
+
+
+class EmailNotifyProvider(Provider):
+    """`notify.email` provider.
+
+    Dry run:
+    - Produces synthetic delivery metadata without sending mail.
+    Live mode:
+    - Sends via SMTP using config/env credentials.
+    """
+
+    provider_id = "notify.email"
+
+    def invoke(
+        self,
+        input: Dict[str, Any],
+        config: Dict[str, Any],
+        context: ExecutionContext,
+    ) -> ExecutionHandle:
+        to_addr = input.get("to")
+        subject = input.get("subject")
+        body = input.get("body")
+        if not isinstance(to_addr, str) or "@" not in to_addr:
+            raise ProviderError("invalid_input", "notify.email requires input.to email", False)
+        if not isinstance(subject, str):
+            raise ProviderError("invalid_input", "notify.email requires input.subject string", False)
+        if not isinstance(body, str):
+            raise ProviderError("invalid_input", "notify.email requires input.body string", False)
+
+        from_addr = config.get("from") or os.getenv("SMTP_FROM")
+        if not isinstance(from_addr, str) or "@" not in from_addr:
+            raise ProviderError(
+                code="invalid_config",
+                message="notify.email requires config.from or SMTP_FROM",
+                retryable=False,
+            )
+
+        if _is_dry_run(config):
+            output = {
+                "sent": False,
+                "dry_run": True,
+                "to": to_addr,
+                "from": from_addr,
+                "subject": subject,
+                "message_id": f"dry-{context.idempotency_key[:16]}",
+            }
+        else:
+            host = config.get("smtp_host") or os.getenv("SMTP_HOST")
+            if not isinstance(host, str) or not host.strip():
+                raise ProviderError(
+                    code="invalid_config",
+                    message="notify.email requires config.smtp_host or SMTP_HOST in live mode",
+                    retryable=False,
+                )
+
+            port_raw = config.get("smtp_port", os.getenv("SMTP_PORT", "587"))
+            try:
+                port = int(port_raw)
+            except (TypeError, ValueError):
+                raise ProviderError(
+                    code="invalid_config",
+                    message="notify.email SMTP port must be an integer",
+                    retryable=False,
+                )
+            username = config.get("smtp_username") or os.getenv("SMTP_USERNAME")
+            password = config.get("smtp_password") or os.getenv("SMTP_PASSWORD")
+            starttls = bool(config.get("smtp_starttls", True))
+
+            msg = EmailMessage()
+            msg["From"] = from_addr
+            msg["To"] = to_addr
+            msg["Subject"] = subject
+            msg["X-BPG-Idempotency-Key"] = context.idempotency_key
+            msg.set_content(body)
+
+            try:
+                with smtplib.SMTP(host=host, port=port, timeout=10) as client:
+                    if starttls:
+                        client.starttls()
+                    if username:
+                        client.login(username, password or "")
+                    client.send_message(msg)
+            except Exception as exc:
+                raise ProviderError(
+                    code="smtp_send_error",
+                    message=str(exc),
+                    retryable=True,
+                )
+
+            output = {
+                "sent": True,
+                "dry_run": False,
+                "to": to_addr,
+                "from": from_addr,
+                "subject": subject,
+                "message_id": f"smtp-{context.idempotency_key[:16]}",
+            }
+
+        return ExecutionHandle(
+            handle_id=context.idempotency_key,
+            idempotency_key=context.idempotency_key,
+            provider_id=self.provider_id,
+            provider_data={"status": ExecutionStatus.COMPLETED, "output": output},
+        )
+
+    def poll(self, handle: ExecutionHandle) -> ExecutionStatus:
+        return handle.provider_data.get("status", ExecutionStatus.COMPLETED)
+
+    def await_result(
+        self, handle: ExecutionHandle, timeout: Optional[float] = None
+    ) -> Dict[str, Any]:
+        _ = timeout
+        return dict(handle.provider_data.get("output", {}))
+
+    def cancel(self, handle: ExecutionHandle) -> None:
+        handle.provider_data["status"] = ExecutionStatus.FAILED
+
+    def packaging_requirements(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        required: list[str] = []
+        optional: list[str] = ["SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD"]
+        if not config.get("from"):
+            required.append("SMTP_FROM")
+        else:
+            optional.append("SMTP_FROM")
+        if _is_dry_run(config):
+            optional.append("SMTP_HOST")
+            return {"services": [], "required_env": required, "optional_env": optional}
+        required.append("SMTP_HOST")
+        return {
+            "services": [],
+            "required_env": required,
+            "optional_env": optional,
+        }

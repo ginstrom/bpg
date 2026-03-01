@@ -21,15 +21,19 @@ from bpg.providers import (
     AgentPipelineProvider,
     BpgProcessCallProvider,
     DashboardFormProvider,
+    EmailNotifyProvider,
     FlowAwaitAllProvider,
     FlowFanoutProvider,
     FlowLoopProvider,
     HttpGitlabProvider,
+    ParseTextNumbersProvider,
     PROVIDER_REGISTRY,
     QueueKafkaProvider,
     MockProvider,
     ProviderError,
+    SumNumbersProvider,
     TimerDelayProvider,
+    WebSearchProvider,
     WebhookProvider,
     compute_idempotency_key,
 )
@@ -460,6 +464,10 @@ class TestProviderRegistry:
             "flow.fanout",
             "flow.await_all",
             "bpg.process_call",
+            "text.parse_numbers",
+            "math.sum_numbers",
+            "tool.web_search",
+            "notify.email",
         }
 
 
@@ -529,6 +537,112 @@ class TestBuiltInProviders:
         ctx = _ctx(node_name="call")
         with pytest.raises(ProviderError, match="requires config.process_name"):
             provider.invoke({}, {}, ctx)
+
+    def test_parse_text_numbers_extracts_numeric_tokens(self):
+        provider = ParseTextNumbersProvider()
+        ctx = _ctx(node_name="parse")
+        handle = provider.invoke({"text": "values: 4, 10.5 and -2"}, {}, ctx)
+        out = provider.await_result(handle)
+        assert out["numbers"] == [4.0, 10.5, -2.0]
+
+    def test_sum_numbers_returns_total_and_count(self):
+        provider = SumNumbersProvider()
+        ctx = _ctx(node_name="sum")
+        handle = provider.invoke({"numbers": [1, 2, 3.5]}, {}, ctx)
+        out = provider.await_result(handle)
+        assert out["sum"] == 6.5
+        assert out["count"] == 3
+
+    def test_web_search_dry_run(self):
+        provider = WebSearchProvider()
+        ctx = _ctx(node_name="search")
+        handle = provider.invoke({"query": "bpg architecture"}, {"dry_run": True, "top_k": 2}, ctx)
+        out = provider.await_result(handle)
+        assert out["source"] == "dry-run"
+        assert len(out["results"]) == 2
+
+    def test_web_search_live_mode_calls_endpoint(self):
+        provider = WebSearchProvider()
+        ctx = _ctx(node_name="search")
+
+        class _Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b'{"results":[{"title":"A","url":"https://a","snippet":"S"}]}'
+
+        with patch("bpg.providers.builtin.urllib.request.urlopen", return_value=_Resp()):
+            with patch.dict("os.environ", {"WEB_SEARCH_API_KEY": "k"}, clear=False):
+                handle = provider.invoke(
+                    {"query": "hello"},
+                    {"endpoint": "https://search.local", "dry_run": False},
+                    ctx,
+                )
+        out = provider.await_result(handle)
+        assert out["source"] == "https://search.local"
+        assert out["results"][0]["title"] == "A"
+
+    def test_email_notify_dry_run(self):
+        provider = EmailNotifyProvider()
+        ctx = _ctx(node_name="mail")
+        with patch.dict("os.environ", {"SMTP_FROM": "robot@example.com"}, clear=False):
+            handle = provider.invoke(
+                {"to": "user@example.com", "subject": "Hello", "body": "Hi"},
+                {"dry_run": True},
+                ctx,
+            )
+        out = provider.await_result(handle)
+        assert out["dry_run"] is True
+        assert out["sent"] is False
+
+    def test_email_notify_live_mode_uses_smtp(self):
+        provider = EmailNotifyProvider()
+        ctx = _ctx(node_name="mail")
+
+        class _FakeSMTP:
+            def __init__(self, host, port, timeout):
+                self.host = host
+                self.port = port
+                self.timeout = timeout
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def starttls(self):
+                return None
+
+            def login(self, username, password):
+                return None
+
+            def send_message(self, msg):
+                return None
+
+        with patch("bpg.providers.builtin.smtplib.SMTP", _FakeSMTP):
+            with patch.dict(
+                "os.environ",
+                {
+                    "SMTP_HOST": "smtp.local",
+                    "SMTP_FROM": "robot@example.com",
+                    "SMTP_USERNAME": "user",
+                    "SMTP_PASSWORD": "pass",
+                },
+                clear=False,
+            ):
+                handle = provider.invoke(
+                    {"to": "user@example.com", "subject": "Hello", "body": "Hi"},
+                    {"dry_run": False},
+                    ctx,
+                )
+        out = provider.await_result(handle)
+        assert out["dry_run"] is False
+        assert out["sent"] is True
 
 
 # ---------------------------------------------------------------------------
