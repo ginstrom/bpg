@@ -1,0 +1,156 @@
+# types.bpg.yaml included here for simplicity in one file
+types:
+  BugReport:
+    title: string
+    severity: enum(S1,S2,S3)
+    description: string
+    reporter_email: string?
+
+  TriageResult:
+    risk: enum(low,med,high)
+    summary: string
+    labels: list<string>
+    recommended_assignee: string?
+
+  ApprovalRequest:
+    title: string
+    risk_level: enum(low,med,high)
+    reporter: string?
+
+  ApprovalDecision:
+    approved: bool
+    reason: string?
+
+  IssueRequest:
+    title: string
+    labels: list<string>
+    assignee: string?
+
+  IssueResult:
+    ticket_id: string
+    url: string
+
+node_types:
+  triage_agent@v1:
+    description: "Classifies a bug report and generates a risk assessment."
+    in: BugReport
+    out: TriageResult
+    provider: agent.pipeline
+    version: v1
+    timeout_default: 5m
+    config_schema:
+      pipeline: string
+      model: string?
+
+  slack_approval@v1:
+    description: "Sends an interactive approval prompt to a Slack channel."
+    in: ApprovalRequest
+    out: ApprovalDecision
+    provider: slack.interactive
+    version: v1
+    timeout_default: 24h
+    config_schema:
+      channel: string
+      buttons: list<string>
+      timeout: duration
+
+  gitlab_issue_create@v1:
+    description: "Opens a new issue in a GitLab project."
+    in: IssueRequest
+    out: IssueResult
+    provider: http.gitlab
+    version: v1
+    config_schema:
+      project_id: string
+      default_labels: list<string>?
+
+  dashboard.form@v1:
+    description: "Web form provider"
+    in: BugReport
+    out: BugReport
+    provider: dashboard.form
+    version: v1
+    config_schema:
+      title: string
+      schema: string
+
+metadata:
+  name: bug-triage-process
+  version: 1.4.0
+  description: "End-to-end bug ingestion, triage, approval, and issue creation."
+  owner: platform-eng@myorg.com
+
+nodes:
+  intake_form:
+    type: dashboard.form@v1
+    description: "Web form for submitting new bug reports."
+    config:
+      title: "Report a Bug"
+      schema: BugReport
+
+  triage:
+    type: triage_agent@v1
+    description: "AI-powered risk classification of incoming bug reports."
+    config:
+      pipeline: triage_v2
+      model: gpt-4o
+    retry:
+      max_attempts: 3
+      backoff: exponential
+      initial_delay: 5s
+
+  approval:
+    type: slack_approval@v1
+    description: "Engineering lead sign-off for high-risk bugs."
+    config:
+      channel: "#ops-approvals"
+      buttons: [Approve, Reject]
+      timeout: 48h
+    on_timeout:
+      out:
+        approved: false
+        reason: "Auto-rejected: no response within 48 hours."
+
+  gitlab:
+    type: gitlab_issue_create@v1
+    description: "Creates the canonical GitLab issue for the bug."
+    config:
+      project_id: "myorg/backend"
+      default_labels: ["bug", "needs-triage"]
+
+trigger: intake_form
+
+edges:
+  - from: intake_form
+    to: triage
+    with:
+      title: trigger.in.title
+      severity: trigger.in.severity
+      description: trigger.in.description
+      reporter_email: trigger.in.reporter_email
+
+  - from: triage
+    to: approval
+    when: triage.out.risk == "high"
+    with:
+      title: "High-risk bug: {{triage.out.summary}}"
+      risk_level: triage.out.risk
+      reporter: trigger.in.reporter_email
+
+  - from: triage
+    to: gitlab
+    when: triage.out.risk != "high"
+    with:
+      title: triage.out.summary
+      labels: triage.out.labels
+      assignee: triage.out.recommended_assignee
+
+  - from: approval
+    to: gitlab
+    when: approval.out.approved == true
+    with:
+      title: triage.out.summary
+      labels: triage.out.labels
+      assignee: triage.out.recommended_assignee
+
+output: gitlab.out.ticket_id

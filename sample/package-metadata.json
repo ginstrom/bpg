@@ -1,0 +1,10 @@
+{
+  "generated_at": "2026-02-27T06:41:25.228444+00:00",
+  "process_hash": "d2d9b5fc72024f20614d5b79d0bd77b67c6e263e0173055122335c0518f1c784",
+  "process_name": "bug-triage-process",
+  "ready_to_run": true,
+  "services": [
+    "postgres"
+  ],
+  "unresolved_required_vars": []
+}

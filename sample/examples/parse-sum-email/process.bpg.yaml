@@ -1,0 +1,96 @@
+metadata:
+  name: sample-parse-sum-email
+  version: 1.0.0
+  description: "Parse numbers from text, sum them, and emit an email notification."
+
+types:
+  TextIn:
+    text: string
+  NumbersOut:
+    numbers: list<number>
+  SumOut:
+    sum: number
+    count: number
+  EmailIn:
+    to: string
+    subject: string
+    body: string
+  EmailOut:
+    sent: bool
+    dry_run: bool
+    to: string
+    from: string
+    subject: string
+    message_id: string
+
+node_types:
+  ingest@v1:
+    in: TextIn
+    out: TextIn
+    provider: core.passthrough
+    version: v1
+    config_schema: {}
+
+  parse_numbers@v1:
+    in: TextIn
+    out: NumbersOut
+    provider: text.parse_numbers
+    version: v1
+    config_schema: {}
+
+  sum_numbers@v1:
+    in: NumbersOut
+    out: SumOut
+    provider: math.sum_numbers
+    version: v1
+    config_schema: {}
+
+  send_email@v1:
+    in: EmailIn
+    out: EmailOut
+    provider: notify.email
+    version: v1
+    config_schema:
+      from: string
+      dry_run: bool
+
+nodes:
+  ingest:
+    type: ingest@v1
+    config: {}
+
+  parse:
+    type: parse_numbers@v1
+    config: {}
+
+  sum:
+    type: sum_numbers@v1
+    config: {}
+
+  email:
+    type: send_email@v1
+    config:
+      from: robot@example.com
+      dry_run: true
+
+trigger: ingest
+
+edges:
+  - from: ingest
+    to: parse
+    with:
+      text: ingest.out.text
+
+  - from: parse
+    to: sum
+    with:
+      numbers: parse.out.numbers
+
+  - from: sum
+    to: email
+    with:
+      to: "demo@example.com"
+      subject: "BPG sum result"
+      body: "Sum={{sum.out.sum}}, count={{sum.out.count}}"
+
+output: email.out

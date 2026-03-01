@@ -1,0 +1,83 @@
+metadata:
+  name: sample-search-email
+  version: 1.0.0
+  description: "Run a web search and send a summary email."
+
+types:
+  SearchIn:
+    query: string
+  SearchOut:
+    query: string
+    results: list<object>
+    source: string
+  EmailIn:
+    to: string
+    subject: string
+    body: string
+  EmailOut:
+    sent: bool
+    dry_run: bool
+    to: string
+    from: string
+    subject: string
+    message_id: string
+
+node_types:
+  ingest@v1:
+    in: SearchIn
+    out: SearchIn
+    provider: core.passthrough
+    version: v1
+    config_schema: {}
+
+  web_search@v1:
+    in: SearchIn
+    out: SearchOut
+    provider: tool.web_search
+    version: v1
+    config_schema:
+      dry_run: bool
+      top_k: number
+
+  send_email@v1:
+    in: EmailIn
+    out: EmailOut
+    provider: notify.email
+    version: v1
+    config_schema:
+      from: string
+      dry_run: bool
+
+nodes:
+  ingest:
+    type: ingest@v1
+    config: {}
+
+  search:
+    type: web_search@v1
+    config:
+      dry_run: true
+      top_k: 3
+
+  email:
+    type: send_email@v1
+    config:
+      from: robot@example.com
+      dry_run: true
+
+trigger: ingest
+
+edges:
+  - from: ingest
+    to: search
+    with:
+      query: ingest.out.query
+
+  - from: search
+    to: email
+    with:
+      to: "demo@example.com"
+      subject: "BPG search summary"
+      body: "Query '{{search.out.query}}' completed via {{search.out.source}}"
+
+output: email.out

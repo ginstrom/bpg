@@ -1,0 +1,63 @@
+metadata:
+  name: example-parse-sum
+  version: 1.0.0
+  description: "Trigger text input, parse numbers, and compute sum."
+
+types:
+  TextIn:
+    text: string
+  NumbersOut:
+    numbers: list<number>
+  SumOut:
+    sum: number
+    count: number
+
+node_types:
+  ingest@v1:
+    in: TextIn
+    out: TextIn
+    provider: core.passthrough
+    version: v1
+    config_schema: {}
+
+  parse_numbers@v1:
+    in: TextIn
+    out: NumbersOut
+    provider: text.parse_numbers
+    version: v1
+    config_schema: {}
+
+  sum_numbers@v1:
+    in: NumbersOut
+    out: SumOut
+    provider: math.sum_numbers
+    version: v1
+    config_schema: {}
+
+nodes:
+  ingest:
+    type: ingest@v1
+    config: {}
+
+  parse:
+    type: parse_numbers@v1
+    config: {}
+
+  sum:
+    type: sum_numbers@v1
+    config: {}
+
+trigger: ingest
+
+edges:
+  - from: ingest
+    to: parse
+    with:
+      text: ingest.out.text
+
+  - from: parse
+    to: sum
+    with:
+      numbers: parse.out.numbers
+
+output: sum.out
