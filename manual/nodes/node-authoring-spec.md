@@ -109,6 +109,13 @@ Behavior:
 - `bpg up`: unresolved required vars are hard errors
 - `bpg package`: unresolved required vars are warnings (artifact can still be shipped)
 
+Custom provider loading:
+
+- built-ins are always available
+- declarative registry files are merged in at runtime:
+  - default auto-load: `bpg.providers.yaml` / `bpg.providers.yml`
+  - explicit: `--providers-file <path>`
+
 ## 8. Runtime Semantics for Node Authors
 
 Provider interface:
@@ -150,3 +157,5 @@ Execution modes:
 - wire edges with complete required input mappings
 - validate with `bpg plan`
 - exercise with dry-run and live mode where applicable
+
+For implementing brand-new provider code (for example OCR), see [custom-provider-development.md](custom-provider-development.md).

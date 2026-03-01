@@ -983,6 +983,8 @@ The current implementation supports two operational paths:
 ### 17.1 Local Runtime (`bpg up`)
 
 - If `process_file` is omitted, CLI defaults to `process.bpg.yaml` then `process.bpg.yml` in current directory.
+- CLI auto-loads declarative provider registries from `bpg.providers.yaml` / `bpg.providers.yml` when present
+  (or explicit `--providers-file`).
 - Uses shared runtime inference with local defaults.
 - Defaults ledger backend to `sqlite-file` unless overridden by policy tags.
 - Builds local image `bpg-local:dev` from the current repository.
@@ -993,6 +995,8 @@ The current implementation supports two operational paths:
 ### 17.2 Package Runtime (`bpg package`)
 
 - If `process_file` is omitted, CLI defaults to `process.bpg.yaml` then `process.bpg.yml` in current directory.
+- CLI auto-loads declarative provider registries from `bpg.providers.yaml` / `bpg.providers.yml` when present
+  (or explicit `--providers-file`).
 - Uses shared runtime inference with package defaults.
 - Defaults ledger backend to `postgres` unless overridden by policy tags.
 - Missing required environment variables are warning-only during packaging.

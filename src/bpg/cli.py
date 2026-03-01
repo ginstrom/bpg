@@ -41,6 +41,8 @@ from bpg.packaging import (
 )
 from bpg.runtime.orchestration import build_image_command, compose_command, write_runtime_bundle
 from bpg.state.store import StateStore
+from bpg.providers import PROVIDER_REGISTRY
+from bpg.providers.loader import ProviderRegistryError, load_declared_providers
 
 
 _PLACEHOLDER_VALUES = {
@@ -55,6 +57,10 @@ _PLACEHOLDER_VALUES = {
     "tbd",
 }
 _DEFAULT_PROCESS_FILENAMES = ("process.bpg.yaml", "process.bpg.yml")
+_PROVIDERS_FILE_HELP = (
+    "Path to declarative provider registry YAML. "
+    "When omitted, bpg.providers.yaml / bpg.providers.yml is auto-loaded if present."
+)
 
 
 def main() -> None:
@@ -157,6 +163,23 @@ def _resolve_local_dir_from_process_file(process_file: Path | None, command_name
     return _resolve_local_runtime_dir(local_dir)
 
 
+def _load_declared_providers_or_exit(providers_file: Path | None) -> None:
+    try:
+        loaded_from, loaded_ids = load_declared_providers(
+            providers_file,
+            registry=PROVIDER_REGISTRY,
+        )
+    except ProviderRegistryError as e:
+        err_console.print(f"Error: {e}")
+        raise typer.Exit(code=1)
+    if loaded_from and loaded_ids:
+        loaded_preview = ", ".join(sorted(loaded_ids))
+        console.print(
+            "[bold green]✓[/bold green] Loaded provider registry: "
+            f"[cyan]{loaded_from}[/cyan] ({loaded_preview})"
+        )
+
+
 def _print_plan(process_name: str, process, plan: Plan, old_process=None) -> None:
     """Render a deterministic plan view with graph + IR + artifact previews."""
     console.print(f"[bold yellow]Plan for process: {process_name}[/bold yellow]")
@@ -233,9 +256,16 @@ def visualize(
         "--open",
         help="Open the visualization in the default web browser.",
     ),
+    providers_file: Path | None = typer.Option(
+        None,
+        "--providers-file",
+        help=_PROVIDERS_FILE_HELP,
+        exists=False,
+    ),
 ) -> None:
     """Generate a React Flow visualization of the process graph."""
     try:
+        _load_declared_providers_or_exit(providers_file)
         process = parse_process_file(process_file)
         validate_process(process)
         ir = compile_process(process)
@@ -272,6 +302,12 @@ def plan(
         "--state-dir",
         help="Directory where BPG state is persisted.",
     ),
+    providers_file: Path | None = typer.Option(
+        None,
+        "--providers-file",
+        help=_PROVIDERS_FILE_HELP,
+        exists=False,
+    ),
 ) -> None:
     """Compile a process definition and show a diff against the current deployed state.
 
@@ -280,6 +316,7 @@ def plan(
     No execution occurs during plan.
     """
     try:
+        _load_declared_providers_or_exit(providers_file)
         process = parse_process_file(process_file)
         validate_process(process)
         
@@ -343,9 +380,16 @@ def package(
         "--image",
         help="Container image reference for packaged runtime. When omitted, package output is local-buildable.",
     ),
+    providers_file: Path | None = typer.Option(
+        None,
+        "--providers-file",
+        help=_PROVIDERS_FILE_HELP,
+        exists=False,
+    ),
 ) -> None:
     """Generate a docker-compose package for a process definition."""
     try:
+        _load_declared_providers_or_exit(providers_file)
         resolved_process_file = _resolve_process_file(process_file, "package")
         process_text = resolved_process_file.read_text()
         process = parse_process_file(resolved_process_file)
@@ -415,9 +459,16 @@ def up(
         "--dashboard-port",
         help="Host/container port for dashboard service.",
     ),
+    providers_file: Path | None = typer.Option(
+        None,
+        "--providers-file",
+        help=_PROVIDERS_FILE_HELP,
+        exists=False,
+    ),
 ) -> None:
     """Bring up a local runtime for the process using docker compose."""
     try:
+        _load_declared_providers_or_exit(providers_file)
         resolved_process_file = _resolve_process_file(process_file, "up")
         process_text = resolved_process_file.read_text()
         process = parse_process_file(resolved_process_file)
@@ -562,6 +613,12 @@ def apply(
         "--auto-approve",
         help="Skip interactive approval prompt and apply immediately.",
     ),
+    providers_file: Path | None = typer.Option(
+        None,
+        "--providers-file",
+        help=_PROVIDERS_FILE_HELP,
+        exists=False,
+    ),
 ) -> None:
     """Deploy the planned process changes to the BPG runtime.
 
@@ -570,6 +627,7 @@ def apply(
     new state. Idempotent — re-applying an already-applied plan is a no-op.
     """
     try:
+        _load_declared_providers_or_exit(providers_file)
         process = parse_process_file(process_file)
         validate_process(process)
         
@@ -610,8 +668,6 @@ def apply(
                 "Re-run 'bpg apply' after resolving drift."
             )
             raise typer.Exit(code=1)
-
-        from bpg.providers import PROVIDER_REGISTRY
 
         # Use freshest record for undeploy artifacts
         old_deployments = (current_record or {}).get("deployments", {})
@@ -678,9 +734,16 @@ def run(
         "--state-dir",
         help="Directory where BPG state is persisted.",
     ),
+    providers_file: Path | None = typer.Option(
+        None,
+        "--providers-file",
+        help=_PROVIDERS_FILE_HELP,
+        exists=False,
+    ),
 ) -> None:
     """Trigger a new run of a deployed process with an input payload."""
     try:
+        _load_declared_providers_or_exit(providers_file)
         store = StateStore(state_dir)
         process = store.load_process(process_name)
         if process is None:

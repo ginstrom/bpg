@@ -37,14 +37,14 @@ uv run bpg --help
 ```
 
 Available commands:
-- `bpg visualize <process_file>`
-- `bpg plan <process_file>`
-- `bpg package [process_file] --output-dir <dir> [--force] [--dashboard] [--dashboard-port <port>]`
-- `bpg up [process_file] [--local-dir <dir>] [--force] [--dashboard] [--dashboard-port <port>]`
+- `bpg visualize <process_file> [--providers-file <path>]`
+- `bpg plan <process_file> [--providers-file <path>]`
+- `bpg package [process_file] --output-dir <dir> [--force] [--dashboard] [--dashboard-port <port>] [--providers-file <path>]`
+- `bpg up [process_file] [--local-dir <dir>] [--force] [--dashboard] [--dashboard-port <port>] [--providers-file <path>]`
 - `bpg down [process_file] [--local-dir <dir>]`
 - `bpg logs [--local-dir <dir>] [--service <name>]`
-- `bpg apply <process_file>`
-- `bpg run <process_name> [--input FILE]`
+- `bpg apply <process_file> [--providers-file <path>]`
+- `bpg run <process_name> [--input FILE] [--providers-file <path>]`
 - `bpg status [run_id] [--process PROCESS_NAME]`
 
 ## Typical Workflow
@@ -69,6 +69,8 @@ uv run bpg status <run_id>
 
 ## Command Details
 - `plan`
+  - Auto-loads custom provider registry from `bpg.providers.yaml`/`bpg.providers.yml` if present.
+  - `--providers-file` can point to a non-default provider registry YAML.
   - Parses + validates process YAML.
   - Compiles IR and shows diff against deployed process record.
   - Does not execute nodes.
@@ -78,6 +80,8 @@ uv run bpg status <run_id>
   - Deploys/undeploys provider artifacts for changed nodes.
   - Persists process record with incremented version.
 - `package`
+  - Auto-loads custom provider registry from `bpg.providers.yaml`/`bpg.providers.yml` if present.
+  - `--providers-file` can point to a non-default provider registry YAML.
   - If `process_file` is omitted, defaults to `process.bpg.yaml` then `process.bpg.yml` in current directory.
   - Validates and compiles process definition.
   - Infers internal services for docker compose (defaults to postgres ledger for package mode).
@@ -98,6 +102,8 @@ uv run bpg status <run_id>
   - Default package mode is local-buildable (`docker compose up --build`) and does not require pulling a registry image.
   - `--image` (or `BPG_PACKAGE_IMAGE`) switches package mode to an explicit image reference.
 - `up`
+  - Auto-loads custom provider registry from `bpg.providers.yaml`/`bpg.providers.yml` if present.
+  - `--providers-file` can point to a non-default provider registry YAML.
   - If `process_file` is omitted, defaults to `process.bpg.yaml` then `process.bpg.yml` in current directory.
   - Builds a local runtime bundle using the same inference model as `package` with local defaults.
   - Builds local image `bpg-local:dev` from the current repository before `docker compose up -d`.
@@ -112,6 +118,8 @@ uv run bpg status <run_id>
 - `logs`
   - Streams local runtime logs via `docker compose logs --tail 200`.
 - `run`
+  - Auto-loads custom provider registry from `bpg.providers.yaml`/`bpg.providers.yml` if present.
+  - `--providers-file` can point to a non-default provider registry YAML.
   - Loads deployed process by `metadata.name`.
   - Accepts YAML or JSON input via `--input`; defaults to `{}`.
   - Executes end-to-end and persists run/node/event records.
