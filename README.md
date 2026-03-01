@@ -7,13 +7,13 @@ Business Process Graph (BPG) is a declarative workflow system for defining, pack
 Install as an application (recommended):
 
 ```bash
-uv tool install "git+https://github.com/<org>/<repo>.git"
+uv tool install "git+https://github.com/ginstrom/bpg.git"
 ```
 
 or:
 
 ```bash
-pipx install "git+https://github.com/<org>/<repo>.git"
+pipx install "git+https://github.com/ginstrom/bpg.git"
 ```
 
 Then run:
@@ -21,6 +21,11 @@ Then run:
 ```bash
 bpg --help
 ```
+
+## Documentation
+
+- [User Manual](manual/USER_MANUAL.md)
+- [BPG Specification](docs/bpg-spec.md)
 
 ## Local Dev Setup
 
