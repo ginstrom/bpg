@@ -22,6 +22,7 @@ Usage::
 from __future__ import annotations
 
 import re as _re
+import copy
 import threading
 import time
 import uuid
@@ -34,6 +35,7 @@ from bpg.compiler.ir import ExecutionIR, ResolvedEdge
 from bpg.models.schema import BackoffStrategy, EdgeFailureAction, NodeStatus
 from bpg.providers.base import (
     ExecutionContext,
+    ExecutionStatus,
     Provider,
     ProviderError,
     compute_idempotency_key,
@@ -281,7 +283,7 @@ class LangGraphRuntime:
                 routes[target] = payload
         return routes
 
-    def _invoke_provider_with_isolation(
+    def _invoke_provider_with_timeout(
         self,
         *,
         provider: Provider,
@@ -290,26 +292,14 @@ class LangGraphRuntime:
         context: ExecutionContext,
         timeout: Optional[float],
         cancel_event: threading.Event,
-        run_id: str,
-    ) -> tuple[Optional[Dict[str, Any]], Optional[ProviderError], bool]:
-        """Invoke provider work in a daemon thread with runtime-enforced timeout."""
-        holder: Dict[str, Any] = {"handle": None, "output": None, "error": None}
+    ) -> tuple[Optional[Any], Optional[ProviderError], bool]:
+        """Invoke provider in isolation to enforce timeout even if invoke blocks."""
+        holder: Dict[str, Any] = {"handle": None, "error": None}
         done = threading.Event()
 
         def _worker() -> None:
             try:
-                handle = provider.invoke(input_payload, config, context)
-                holder["handle"] = handle
-                with self._runtime_lock:
-                    self._inflight_handles[run_id] = (provider, handle)
-                if cancel_event.is_set():
-                    provider.cancel(handle)
-                    raise ProviderError(
-                        code="cancelled",
-                        message="Run cancelled",
-                        retryable=False,
-                    )
-                holder["output"] = provider.await_(handle, timeout=timeout)
+                holder["handle"] = provider.invoke(input_payload, config, context)
             except TimeoutError as exc:
                 holder["error"] = exc
             except ProviderError as exc:
@@ -317,12 +307,10 @@ class LangGraphRuntime:
             except Exception as exc:
                 holder["error"] = ProviderError(
                     code="provider_unavailable",
-                    message=str(exc),
-                    retryable=False,
-                )
+                        message=str(exc),
+                        retryable=False,
+                    )
             finally:
-                with self._runtime_lock:
-                    self._inflight_handles.pop(run_id, None)
                 done.set()
 
         threading.Thread(target=_worker, daemon=True).start()
@@ -330,20 +318,8 @@ class LangGraphRuntime:
         deadline = None if timeout is None else (time.monotonic() + timeout)
         while not done.wait(timeout=0.05):
             if cancel_event.is_set():
-                handle = holder.get("handle")
-                if handle is not None:
-                    try:
-                        provider.cancel(handle)
-                    except Exception:
-                        pass
                 return None, ProviderError("cancelled", "Run cancelled", False), False
             if deadline is not None and time.monotonic() >= deadline:
-                handle = holder.get("handle")
-                if handle is not None:
-                    try:
-                        provider.cancel(handle)
-                    except Exception:
-                        pass
                 return None, None, True
 
         err = holder.get("error")
@@ -351,7 +327,77 @@ class LangGraphRuntime:
             return None, None, True
         if isinstance(err, ProviderError):
             return None, err, False
-        return holder.get("output"), None, False
+        return holder.get("handle"), None, False
+
+    @staticmethod
+    def _poll_interval_seconds(handle: Any) -> float:
+        provider_data = getattr(handle, "provider_data", {}) or {}
+        value = provider_data.get("poll_interval", 0.05)
+        try:
+            interval = float(value)
+        except (TypeError, ValueError):
+            return 0.05
+        return interval if interval > 0 else 0.05
+
+    def _await_provider_with_polling(
+        self,
+        *,
+        provider: Provider,
+        handle: Any,
+        timeout: Optional[float],
+        cancel_event: threading.Event,
+    ) -> tuple[Optional[Dict[str, Any]], Optional[ProviderError], bool]:
+        """Drive provider completion with poll() and runtime-managed timeout/cancel."""
+        deadline = None if timeout is None else (time.monotonic() + timeout)
+        poll_interval = self._poll_interval_seconds(handle)
+
+        while True:
+            if cancel_event.is_set():
+                try:
+                    provider.cancel(handle)
+                except Exception:
+                    pass
+                return None, ProviderError("cancelled", "Run cancelled", False), False
+
+            if deadline is not None and time.monotonic() >= deadline:
+                try:
+                    provider.cancel(handle)
+                except Exception:
+                    pass
+                return None, None, True
+
+            try:
+                status = provider.poll(handle)
+            except ProviderError as exc:
+                return None, exc, False
+            except Exception as exc:
+                return None, ProviderError("provider_unavailable", str(exc), False), False
+
+            if status == ExecutionStatus.RUNNING:
+                if timeout is None:
+                    try:
+                        output = provider.await_(handle, timeout=None)
+                        return output, None, False
+                    except TimeoutError:
+                        return None, None, True
+                    except ProviderError as exc:
+                        return None, exc, False
+                    except Exception as exc:
+                        return None, ProviderError("provider_unavailable", str(exc), False), False
+                time.sleep(poll_interval)
+                continue
+
+            try:
+                output = provider.await_(handle, timeout=0.0)
+                return output, None, False
+            except TimeoutError:
+                if deadline is not None and time.monotonic() >= deadline:
+                    return None, None, True
+                return None, ProviderError("provider_unavailable", "provider await timed out", False), False
+            except ProviderError as exc:
+                return None, exc, False
+            except Exception as exc:
+                return None, ProviderError("provider_unavailable", str(exc), False), False
 
     # ------------------------------------------------------------------
     # Node function factory
@@ -386,12 +432,39 @@ class LangGraphRuntime:
                     redact_fields.update(pr.redact_fields)
 
         def _redact(data: Any) -> Any:
-            if not redact_fields or not isinstance(data, dict):
+            if not redact_fields or not isinstance(data, (dict, list)):
                 return data
-            return {
-                k: ("[REDACTED]" if k in redact_fields else v)
-                for k, v in data.items()
-            }
+            redacted = copy.deepcopy(data)
+
+            def _parts(path: str) -> List[str]:
+                return [p for p in path.replace("[]", ".[]").split(".") if p]
+
+            def _mask(value: Any, parts: List[str]) -> Any:
+                if not parts:
+                    return "[REDACTED]"
+                head = parts[0]
+                tail = parts[1:]
+                if isinstance(value, dict):
+                    if head == "*":
+                        for k in list(value.keys()):
+                            value[k] = _mask(value[k], tail)
+                    elif head in value:
+                        value[head] = _mask(value[head], tail)
+                    return value
+                if isinstance(value, list):
+                    if head in {"[]", "*"}:
+                        for i, item in enumerate(value):
+                            value[i] = _mask(item, tail)
+                    elif head.isdigit():
+                        idx = int(head)
+                        if 0 <= idx < len(value):
+                            value[idx] = _mask(value[idx], tail)
+                    return value
+                return value
+
+            for field in redact_fields:
+                redacted = _mask(redacted, _parts(field))
+            return redacted
 
         def node_fn(state: RunState) -> dict:
             run_id: str = state["run_id"]
@@ -845,7 +918,7 @@ class LangGraphRuntime:
 
             for _attempt in range(max_attempts):
                 attempts_used = _attempt + 1
-                if provider_id in _HUMAN_PROVIDER_IDS and self._checkpointer is not None:
+                if provider_id in _HUMAN_PROVIDER_IDS:
                     try:
                         handle = provider.invoke(
                             input_payload, dict(resolved_node.instance.config), context
@@ -873,15 +946,35 @@ class LangGraphRuntime:
                             self._inflight_handles.pop(run_id, None)
                         attempt_exc = exc
                 else:
-                    output, attempt_exc, timed_out = self._invoke_provider_with_isolation(
+                    attempt_started = time.monotonic()
+                    handle, attempt_exc, timed_out = self._invoke_provider_with_timeout(
                         provider=provider,
                         input_payload=input_payload,
                         config=dict(resolved_node.instance.config),
                         context=context,
                         timeout=effective_timeout,
                         cancel_event=cancel_event,
-                        run_id=run_id,
                     )
+                    output = None
+                    if handle is not None and attempt_exc is None and not timed_out:
+                        remaining_timeout = None
+                        if effective_timeout is not None:
+                            remaining_timeout = effective_timeout - (time.monotonic() - attempt_started)
+                            if remaining_timeout <= 0:
+                                timed_out = True
+                        if not timed_out:
+                            with self._runtime_lock:
+                                self._inflight_handles[run_id] = (provider, handle)
+                            try:
+                                output, attempt_exc, timed_out = self._await_provider_with_polling(
+                                    provider=provider,
+                                    handle=handle,
+                                    timeout=remaining_timeout,
+                                    cancel_event=cancel_event,
+                                )
+                            finally:
+                                with self._runtime_lock:
+                                    self._inflight_handles.pop(run_id, None)
                 if timed_out:
                     break
                 if attempt_exc is None:
@@ -1222,6 +1315,7 @@ class LangGraphRuntime:
             audit_record = {
                 "retention": audit.retain_run_logs_for,
                 "export_to": audit.export_to,
+                "tags": dict(audit.tags or {}),
                 "emitted_at": _now_iso(),
             }
             self._sink.emit({
@@ -1231,6 +1325,7 @@ class LangGraphRuntime:
                 "node": "__process__",
                 "timestamp": audit_record["emitted_at"],
                 "status": final_state.get("run_status", "completed"),
+                "tags": audit_record["tags"],
             })
             final_state["audit"] = audit_record
         with self._runtime_lock:

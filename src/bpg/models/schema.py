@@ -300,6 +300,7 @@ class AuditPolicy(_ImmutableModel):
 
     retain_run_logs_for: Optional[str] = None
     export_to: Optional[str] = None
+    tags: Optional[Dict[str, str]] = None
 
 
 class Policy(_ImmutableModel):

@@ -355,6 +355,54 @@ class StateStore:
         runs.sort(key=lambda r: r.get("started_at", ""), reverse=True)
         return runs
 
+    def prune_runs(
+        self,
+        *,
+        process_name: Optional[str] = None,
+        older_than: Optional[str] = None,
+        statuses: Optional[set[str]] = None,
+        dry_run: bool = False,
+    ) -> list[str]:
+        """Delete run records matching pruning filters.
+
+        Args:
+            process_name: Optional process name filter.
+            older_than: Optional duration (e.g. ``30d``) based on ``started_at``.
+            statuses: Optional allowed set of run statuses to prune.
+            dry_run: When True, only returns candidate run IDs.
+
+        Returns:
+            List of run IDs that matched the pruning criteria.
+        """
+        retention_seconds = self._parse_duration_seconds(older_than)
+        cutoff = None
+        if retention_seconds is not None:
+            cutoff = datetime.now(timezone.utc).timestamp() - retention_seconds
+
+        matched: list[str] = []
+        for run in self.list_runs(process_name=process_name):
+            run_id = run.get("run_id")
+            if not isinstance(run_id, str) or not run_id:
+                continue
+            if statuses and str(run.get("status", "")) not in statuses:
+                continue
+            if cutoff is not None:
+                started_at = run.get("started_at")
+                if not isinstance(started_at, str):
+                    continue
+                try:
+                    started_dt = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                if started_dt.timestamp() >= cutoff:
+                    continue
+            matched.append(run_id)
+
+        if not dry_run:
+            for run_id in matched:
+                shutil.rmtree(self._runs_dir / run_id, ignore_errors=True)
+        return matched
+
     def save_node_record(
         self,
         run_id: str,

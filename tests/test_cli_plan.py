@@ -92,3 +92,33 @@ def test_status_shows_failure_details_and_attempts(tmp_path: Path):
     assert result.exit_code == 0
     assert "attempts=3" in result.stdout
     assert "error=rate limit" in result.stdout
+
+
+def test_cleanup_dry_run_reports_matches_without_deleting(tmp_path: Path):
+    import yaml
+
+    state_dir = tmp_path / "state"
+    store = StateStore(state_dir)
+    store.create_run("run-1", "p1", {})
+    run_path = state_dir / "runs" / "run-1" / "run.yaml"
+    rec = yaml.safe_load(run_path.read_text())
+    rec["started_at"] = "2000-01-01T00:00:00+00:00"
+    run_path.write_text(yaml.safe_dump(rec, sort_keys=False))
+
+    result = runner.invoke(
+        app,
+        ["cleanup", "--state-dir", str(state_dir), "--older-than", "1d", "--dry-run"],
+    )
+    assert result.exit_code == 0
+    assert "Would prune 1 run(s)." in result.stdout
+    assert store.load_run("run-1") is not None
+
+
+def test_cleanup_invalid_duration_fails(tmp_path: Path):
+    state_dir = tmp_path / "state"
+    result = runner.invoke(
+        app,
+        ["cleanup", "--state-dir", str(state_dir), "--older-than", "soon"],
+    )
+    assert result.exit_code == 1
+    assert "invalid --older-than value" in result.stderr

@@ -170,9 +170,16 @@ def test_conditional_branch_high_risk(ir):
 # ---------------------------------------------------------------------------
 
 
-def test_failed_node_provider_error(ir):
+def test_failed_node_provider_error(ir, monkeypatch):
     """When a provider raises ProviderError the node is recorded as failed."""
     mock = MockProvider()
+    slept: list[float] = []
+
+    # Exercise retry/backoff logic without wall-clock waiting.
+    monkeypatch.setattr(
+        "bpg.runtime.langgraph_runtime.time.sleep",
+        lambda seconds: slept.append(float(seconds)),
+    )
 
     # triage will fail
     mock.register_error(
@@ -205,6 +212,9 @@ def test_failed_node_provider_error(ir):
     assert len(triage_log) == 1
     assert triage_log[0]["status"] == NodeStatus.FAILED.value
     assert "rate_limit" in triage_log[0].get("error", "")
+    triage_calls = [c for c in mock.calls if c.node_name == "triage"]
+    assert len(triage_calls) == 3
+    assert slept == [5.0, 10.0]
     assert final_state["run_status"] == NodeStatus.FAILED.value
 
 
@@ -348,16 +358,63 @@ def test_timeout_with_on_timeout_out_continues_run(ir):
     assert approval_log[0].get("synthetic") is True
 
 
-def test_timeout_without_on_timeout_out_stops_routing(ir):
+def test_timeout_without_on_timeout_out_stops_routing(tmp_path: Path):
     """Timeout with no on_timeout.out: node is TIMED_OUT and downstream skipped."""
     from bpg.providers.base import ExecutionHandle, ExecutionStatus
 
-    # triage has no on_timeout defined, so when it times out the run stops.
+    ir = _compile_inline_process(
+        tmp_path,
+        """
+types:
+  Out:
+    ok: bool
+node_types:
+  trigger_node@v1:
+    in: object
+    out: object
+    provider: mock
+    version: v1
+    config_schema: {}
+  wait_node@v1:
+    in: object
+    out: Out
+    provider: timeout.mock
+    version: v1
+    config_schema: {}
+    timeout_default: 25ms
+  down_node@v1:
+    in: Out
+    out: Out
+    provider: mock
+    version: v1
+    config_schema: {}
+
+nodes:
+  start:
+    type: trigger_node@v1
+    config: {}
+  wait:
+    type: wait_node@v1
+    config: {}
+  down:
+    type: down_node@v1
+    config: {}
+
+trigger: start
+edges:
+  - from: start
+    to: wait
+  - from: wait
+    to: down
+    with:
+      ok: wait.out.ok
+""",
+    )
+
     class _TimeoutTriageProvider(MockProvider):
-        """Provider that always times out — simulates a long-running agent."""
+        """Provider that never completes; runtime timeout should terminate it."""
 
         def invoke(self, input, config, context):
-            # Return a valid handle so the runtime proceeds to await_result
             return ExecutionHandle(
                 handle_id=context.idempotency_key,
                 idempotency_key=context.idempotency_key,
@@ -365,32 +422,22 @@ def test_timeout_without_on_timeout_out_stops_routing(ir):
                 provider_data={"status": ExecutionStatus.RUNNING},
             )
 
-        def await_result(self, handle, timeout=None):
-            raise TimeoutError("simulated triage timeout")
+        def poll(self, handle):
+            return ExecutionStatus.RUNNING
 
     timeout_triage = _TimeoutTriageProvider()
     normal_mock = MockProvider()
 
     providers = {
-        "dashboard.form": normal_mock,
-        "agent.pipeline": timeout_triage,
-        "slack.interactive": normal_mock,
-        "http.gitlab": normal_mock,
+        "mock": normal_mock,
+        "timeout.mock": timeout_triage,
     }
 
     runtime = LangGraphRuntime(ir=ir, providers=providers)
-    final_state = runtime.run(input_payload={
-        "title": "Test",
-        "severity": "S2",
-        "description": "desc",
-        "reporter_email": None,
-    })
+    final_state = runtime.run(input_payload={})
 
-    # triage has no on_timeout, so status is TIMED_OUT
-    assert final_state["node_statuses"]["triage"] == NodeStatus.TIMED_OUT.value
-    # Downstream nodes (approval, gitlab) should be skipped since triage didn't complete
-    assert final_state["node_statuses"]["approval"] == NodeStatus.SKIPPED.value
-    assert final_state["node_statuses"]["gitlab"] == NodeStatus.SKIPPED.value
+    assert final_state["node_statuses"]["wait"] == NodeStatus.TIMED_OUT.value
+    assert final_state["node_statuses"]["down"] == NodeStatus.SKIPPED.value
 
 
 # ---------------------------------------------------------------------------
@@ -723,6 +770,9 @@ policy:
   audit:
     retain_run_logs_for: 365d
     export_to: splunk.audit_sink
+    tags:
+      compliance: sox
+      env: prod
 """,
     )
     mock = MockProvider()
@@ -732,7 +782,10 @@ policy:
     final_state = runtime.run(input_payload={})
     assert final_state["audit"]["retention"] == "365d"
     assert final_state["audit"]["export_to"] == "splunk.audit_sink"
-    assert any(e.get("event_type") == "run_audit" for e in sink.events)
+    assert final_state["audit"]["tags"] == {"compliance": "sox", "env": "prod"}
+    audit_events = [e for e in sink.events if e.get("event_type") == "run_audit"]
+    assert len(audit_events) == 1
+    assert audit_events[0].get("tags") == {"compliance": "sox", "env": "prod"}
 
 
 def test_process_output_is_null_when_referenced_node_skipped(tmp_path: Path):

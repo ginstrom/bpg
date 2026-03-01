@@ -276,3 +276,43 @@ def test_apply_audit_policy_retention_prunes_old_runs(tmp_path: Path):
     )
     assert store.load_run("r-old") is None
     assert store.load_run("r-new") is not None
+
+
+def test_prune_runs_dry_run_does_not_delete(tmp_path: Path):
+    import yaml
+
+    store = StateStore(tmp_path)
+    store.create_run("r-old", "proc-a", {})
+    old_path = tmp_path / "runs" / "r-old" / "run.yaml"
+    old_record = yaml.safe_load(old_path.read_text())
+    old_record["started_at"] = "2000-01-01T00:00:00+00:00"
+    old_path.write_text(yaml.safe_dump(old_record, sort_keys=False))
+
+    matched = store.prune_runs(process_name="proc-a", older_than="1d", dry_run=True)
+    assert matched == ["r-old"]
+    assert store.load_run("r-old") is not None
+
+
+def test_prune_runs_filters_by_status_and_deletes(tmp_path: Path):
+    import yaml
+
+    store = StateStore(tmp_path)
+    store.create_run("r-failed", "proc-a", {})
+    store.update_run("r-failed", {"status": "failed"})
+    store.create_run("r-completed", "proc-a", {})
+    store.update_run("r-completed", {"status": "completed"})
+
+    for rid in ("r-failed", "r-completed"):
+        path = tmp_path / "runs" / rid / "run.yaml"
+        rec = yaml.safe_load(path.read_text())
+        rec["started_at"] = "2000-01-01T00:00:00+00:00"
+        path.write_text(yaml.safe_dump(rec, sort_keys=False))
+
+    matched = store.prune_runs(
+        process_name="proc-a",
+        older_than="1d",
+        statuses={"failed"},
+    )
+    assert matched == ["r-failed"]
+    assert store.load_run("r-failed") is None
+    assert store.load_run("r-completed") is not None
