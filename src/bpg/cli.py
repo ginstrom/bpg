@@ -2,6 +2,10 @@
 
 Commands:
     plan    Compile and diff process definitions against current state.
+    package Generate an artifact-only docker compose bundle.
+    up      Start local runtime services for a process.
+    down    Stop local runtime services.
+    logs    Show local runtime logs.
     apply   Deploy planned changes to the BPG runtime.
     run     Trigger a process run with an input payload.
     status  Show the status of in-flight or completed process runs.
@@ -32,7 +36,120 @@ from bpg.compiler.validator import validate_process, ValidationError
 from bpg.compiler.visualizer import generate_html
 from bpg.compiler.ir import compile_process
 from bpg.compiler.planner import Plan
+from bpg.packaging import (
+    build_runtime_spec,
+)
+from bpg.runtime.orchestration import build_image_command, compose_command, write_runtime_bundle
 from bpg.state.store import StateStore
+
+
+_PLACEHOLDER_VALUES = {
+    "dummy",
+    "changeme",
+    "change_me",
+    "placeholder",
+    "__required__",
+    "<required>",
+    "<placeholder>",
+    "todo",
+    "tbd",
+}
+_DEFAULT_PROCESS_FILENAMES = ("process.bpg.yaml", "process.bpg.yml")
+
+
+def _looks_like_placeholder(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    normalized = value.strip().lower()
+    if not normalized:
+        return False
+    if normalized in _PLACEHOLDER_VALUES:
+        return True
+    if normalized.startswith("dummy-") or normalized.startswith("test-"):
+        return True
+    return False
+
+
+def _resolve_local_runtime_dir(local_dir: Path) -> Path:
+    if local_dir.exists():
+        return local_dir
+
+    default_dir = Path(".bpg/local/default")
+    if local_dir == default_dir:
+        parent = default_dir.parent
+        candidates = sorted([p for p in parent.iterdir() if p.is_dir()]) if parent.exists() else []
+        if len(candidates) == 1:
+            console.print(
+                "[bold yellow]![/bold yellow] Using inferred local runtime directory: "
+                f"[cyan]{candidates[0]}[/cyan]"
+            )
+            return candidates[0]
+        if len(candidates) > 1:
+            err_console.print(
+                "Multiple local runtime directories found under .bpg/local. "
+                "Pass --local-dir explicitly."
+            )
+            raise typer.Exit(code=1)
+        err_console.print(
+            "No local runtime directory found at .bpg/local/default. "
+            "Run 'bpg up <process_file>' first or pass --local-dir."
+        )
+        raise typer.Exit(code=1)
+
+    err_console.print(
+        f"Local runtime directory not found: {local_dir}. "
+        "Pass a valid --local-dir."
+    )
+    raise typer.Exit(code=1)
+
+
+def _find_default_process_file() -> Path | None:
+    for filename in _DEFAULT_PROCESS_FILENAMES:
+        candidate = Path(filename)
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _resolve_process_file(process_file: Path | None, command_name: str) -> Path:
+    if process_file is not None:
+        if process_file.exists() and process_file.is_file():
+            return process_file
+        err_console.print(f"Process file not found: {process_file}")
+        raise typer.Exit(code=1)
+
+    inferred = _find_default_process_file()
+    if inferred is not None:
+        console.print(
+            "[bold yellow]![/bold yellow] Using inferred process file: "
+            f"[cyan]{inferred}[/cyan]"
+        )
+        return inferred
+
+    filenames = ", ".join(_DEFAULT_PROCESS_FILENAMES)
+    err_console.print(
+        f"No process file provided for '{command_name}', and no default file found. "
+        f"Tried: {filenames}."
+    )
+    raise typer.Exit(code=1)
+
+
+def _resolve_local_dir_from_process_file(process_file: Path | None, command_name: str) -> Path:
+    if process_file is None:
+        inferred = _find_default_process_file()
+        if inferred is None:
+            return _resolve_local_runtime_dir(Path(".bpg/local/default"))
+        console.print(
+            "[bold yellow]![/bold yellow] Using inferred process file: "
+            f"[cyan]{inferred}[/cyan]"
+        )
+        resolved_process_file = inferred
+    else:
+        resolved_process_file = _resolve_process_file(process_file, command_name)
+    process = parse_process_file(resolved_process_file)
+    process_name = process.metadata.name if process.metadata else "default"
+    local_dir = Path(".bpg/local") / process_name
+    return _resolve_local_runtime_dir(local_dir)
 
 
 def _print_plan(process_name: str, process, plan: Plan, old_process=None) -> None:
@@ -184,6 +301,243 @@ def plan(
     except Exception as e:
         err_console.print(f"Unexpected error: {e}")
         raise typer.Exit(code=1)
+
+
+@app.command()
+def package(
+    process_file: Path | None = typer.Argument(
+        None,
+        help=(
+            "Path to the process definition file. "
+            "Defaults to process.bpg.yaml or process.bpg.yml in current directory."
+        ),
+    ),
+    output_dir: Optional[Path] = typer.Option(
+        None,
+        "--output-dir",
+        "-o",
+        help="Directory where package artifacts will be written.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Overwrite output directory if it already exists.",
+    ),
+    dashboard: bool = typer.Option(
+        False,
+        "--dashboard",
+        help="Include the dashboard service in generated compose artifacts.",
+    ),
+    dashboard_port: int = typer.Option(
+        8080,
+        "--dashboard-port",
+        help="Host/container port for the dashboard service.",
+    ),
+    image: Optional[str] = typer.Option(
+        None,
+        "--image",
+        help="Container image reference for packaged runtime. When omitted, package output is local-buildable.",
+    ),
+) -> None:
+    """Generate a docker-compose package for a process definition."""
+    try:
+        resolved_process_file = _resolve_process_file(process_file, "package")
+        process_text = resolved_process_file.read_text()
+        process = parse_process_file(resolved_process_file)
+        validate_process(process)
+        _ = compile_process(process)
+
+        process_name = process.metadata.name if process.metadata else "default"
+        out_dir = output_dir or Path(".bpg/package") / process_name
+
+        spec = build_runtime_spec(
+            process,
+            process_text,
+            mode="package",
+            dashboard=dashboard,
+            dashboard_port=dashboard_port,
+            image=image,
+        )
+        write_runtime_bundle(out_dir, process_text, spec, force=force)
+
+        unresolved = [item for item in spec.env_vars if item.required and not item.value]
+
+        console.print(f"[bold green]✓[/bold green] Package generated: [cyan]{out_dir}[/cyan]")
+        if unresolved:
+            console.print(
+                f"[bold yellow]![/bold yellow] {len(unresolved)} unresolved required vars."
+            )
+            for item in unresolved:
+                source = f" ({item.source})" if item.source else ""
+                console.print(f"  - [yellow]{item.name}[/yellow]{source}")
+    except (ParseError, ValidationError) as e:
+        err_console.print(f"Error: {e}")
+        raise typer.Exit(code=1)
+    except FileExistsError as e:
+        err_console.print(f"Error: {e}")
+        raise typer.Exit(code=1)
+    except Exception as e:
+        err_console.print(f"Unexpected error: {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def up(
+    process_file: Path | None = typer.Argument(
+        None,
+        help=(
+            "Path to the process definition file. "
+            "Defaults to process.bpg.yaml or process.bpg.yml in current directory."
+        ),
+    ),
+    local_dir: Optional[Path] = typer.Option(
+        None,
+        "--local-dir",
+        help="Directory where local runtime compose artifacts are written.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Overwrite local runtime directory if it already exists.",
+    ),
+    dashboard: bool = typer.Option(
+        False,
+        "--dashboard",
+        help="Include and start dashboard service.",
+    ),
+    dashboard_port: int = typer.Option(
+        8080,
+        "--dashboard-port",
+        help="Host/container port for dashboard service.",
+    ),
+) -> None:
+    """Bring up a local runtime for the process using docker compose."""
+    try:
+        resolved_process_file = _resolve_process_file(process_file, "up")
+        process_text = resolved_process_file.read_text()
+        process = parse_process_file(resolved_process_file)
+        validate_process(process)
+        _ = compile_process(process)
+        process_name = process.metadata.name if process.metadata else "default"
+        out_dir = local_dir or Path(".bpg/local") / process_name
+
+        spec = build_runtime_spec(
+            process,
+            process_text,
+            mode="local",
+            dashboard=dashboard,
+            dashboard_port=dashboard_port,
+        )
+        unresolved = [item for item in spec.env_vars if item.required and not item.value]
+        if unresolved:
+            console.print(
+                f"[bold red]X[/bold red] {len(unresolved)} unresolved required vars. "
+                "Set the following vars before running local runtime:"
+            )
+            for item in unresolved:
+                source = f" ({item.source})" if item.source else ""
+                console.print(f"  - [yellow]{item.name}[/yellow]{source}")
+            raise typer.Exit(code=1)
+        placeholder_vars = [
+            item for item in spec.env_vars if item.required and _looks_like_placeholder(item.value)
+        ]
+        if placeholder_vars:
+            console.print(
+                f"[bold yellow]![/bold yellow] {len(placeholder_vars)} required vars look like placeholders. "
+                "Runtime may start but external integrations can fail:"
+            )
+            for item in placeholder_vars:
+                source = f" ({item.source})" if item.source else ""
+                console.print(f"  - [yellow]{item.name}[/yellow]{source}={item.value}")
+
+        project_root = Path(__file__).resolve().parents[2]
+        build = build_image_command(spec.runtime_image, project_root)
+        if build.returncode != 0:
+            err_console.print(build.stderr.strip() or build.stdout.strip() or "docker build failed")
+            raise typer.Exit(code=1)
+
+        write_runtime_bundle(out_dir, process_text, spec, force=force)
+        result = compose_command(out_dir, ["up", "-d"])
+        if result.returncode != 0:
+            err_console.print(result.stderr.strip() or result.stdout.strip() or "docker compose up failed")
+            raise typer.Exit(code=1)
+        console.print(f"[bold green]✓[/bold green] Local runtime up: [cyan]{out_dir}[/cyan]")
+        if dashboard:
+            console.print(
+                "[bold green]✓[/bold green] Dashboard: "
+                f"[cyan]http://localhost:{dashboard_port}[/cyan]"
+            )
+    except (ParseError, ValidationError) as e:
+        err_console.print(f"Error: {e}")
+        raise typer.Exit(code=1)
+    except FileExistsError as e:
+        err_console.print(f"Error: {e}")
+        raise typer.Exit(code=1)
+    except typer.Exit:
+        raise
+    except Exception as e:
+        err_console.print(f"Unexpected error: {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def down(
+    process_file: Path | None = typer.Argument(
+        None,
+        help=(
+            "Optional process definition file used to infer local runtime directory. "
+            "Defaults to process.bpg.yaml or process.bpg.yml."
+        ),
+    ),
+    local_dir: Path | None = typer.Option(
+        None,
+        "--local-dir",
+        help="Directory containing local runtime compose artifacts. Overrides process-file inference.",
+    ),
+) -> None:
+    """Tear down a local runtime created by `bpg up`."""
+    try:
+        if local_dir is not None:
+            resolved_dir = _resolve_local_runtime_dir(local_dir)
+        else:
+            resolved_dir = _resolve_local_dir_from_process_file(process_file, "down")
+    except ParseError as e:
+        err_console.print(f"Error: {e}")
+        raise typer.Exit(code=1)
+    except ValidationError as e:
+        err_console.print(f"Error: {e}")
+        raise typer.Exit(code=1)
+    result = compose_command(resolved_dir, ["down"])
+    if result.returncode != 0:
+        err_console.print(result.stderr.strip() or result.stdout.strip() or "docker compose down failed")
+        raise typer.Exit(code=1)
+    console.print(f"[bold green]✓[/bold green] Local runtime down: [cyan]{resolved_dir}[/cyan]")
+
+
+@app.command()
+def logs(
+    local_dir: Path = typer.Option(
+        Path(".bpg/local/default"),
+        "--local-dir",
+        help="Directory containing local runtime compose artifacts.",
+    ),
+    service: Optional[str] = typer.Option(
+        None,
+        "--service",
+        help="Optional service name to filter logs.",
+    ),
+) -> None:
+    """Show local runtime logs."""
+    resolved_dir = _resolve_local_runtime_dir(local_dir)
+    args = ["logs", "--tail", "200"]
+    if service:
+        args.append(service)
+    result = compose_command(resolved_dir, args)
+    if result.returncode != 0:
+        err_console.print(result.stderr.strip() or result.stdout.strip() or "docker compose logs failed")
+        raise typer.Exit(code=1)
+    if result.stdout:
+        console.print(result.stdout, end="")
 
 
 @app.command()
@@ -341,8 +695,6 @@ def run(
             else:
                 input_payload = json.loads(content)
 
-        from bpg.compiler.parser import ParseError
-        from bpg.compiler.validator import ValidationError
         from bpg.runtime.engine import Engine
 
         engine = Engine(process=process, state_store=store)
@@ -442,6 +794,63 @@ def status(
                     f"[cyan]{rid:<38}[/cyan] {pname:<28} [{color}]{st:<12}[/{color}] {started}"
                 )
 
+    except Exception as e:
+        err_console.print(f"Error: {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def cleanup(
+    process_name: Optional[str] = typer.Option(
+        None,
+        "--process",
+        "-p",
+        help="Only prune runs for this process.",
+    ),
+    older_than: Optional[str] = typer.Option(
+        None,
+        "--older-than",
+        help="Only prune runs older than this duration (e.g. 30d, 12h).",
+    ),
+    status: Optional[str] = typer.Option(
+        None,
+        "--status",
+        help="Comma-separated statuses to prune (e.g. failed,completed).",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show matching runs without deleting them.",
+    ),
+    state_dir: Path = typer.Option(
+        Path(".bpg-state"),
+        "--state-dir",
+        help="Directory where BPG state is persisted.",
+    ),
+) -> None:
+    """Prune old run records from the local state store."""
+    try:
+        store = StateStore(state_dir)
+        if older_than and store._parse_duration_seconds(older_than) is None:
+            err_console.print(f"Error: invalid --older-than value '{older_than}'.")
+            raise typer.Exit(code=1)
+
+        status_set = None
+        if status:
+            status_set = {s.strip() for s in status.split(",") if s.strip()}
+
+        matched = store.prune_runs(
+            process_name=process_name,
+            older_than=older_than,
+            statuses=status_set,
+            dry_run=dry_run,
+        )
+        mode = "Would prune" if dry_run else "Pruned"
+        console.print(f"{mode} [bold]{len(matched)}[/bold] run(s).")
+        for run_id in matched:
+            console.print(f"  - [cyan]{run_id}[/cyan]")
+    except typer.Exit:
+        raise
     except Exception as e:
         err_console.print(f"Error: {e}")
         raise typer.Exit(code=1)

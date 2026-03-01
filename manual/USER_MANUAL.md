@@ -1,7 +1,7 @@
 # BPG User Manual
 
 ## What BPG Does
-BPG (Business Process Graph) lets you define typed workflow graphs in YAML, preview deployment changes (`plan`), deploy them (`apply`), and execute them (`run`/`status`) with persisted state and run logs.
+BPG (Business Process Graph) lets you define typed workflow graphs in YAML, preview deployment changes (`plan`), package deployable artifacts (`package`), deploy them (`apply`), and execute them (`run`/`status`) with persisted state and run logs.
 
 ## Prerequisites
 - Python 3.12+
@@ -22,6 +22,10 @@ uv run bpg --help
 Available commands:
 - `bpg visualize <process_file>`
 - `bpg plan <process_file>`
+- `bpg package [process_file] --output-dir <dir> [--force] [--dashboard] [--dashboard-port <port>]`
+- `bpg up [process_file] [--local-dir <dir>] [--force] [--dashboard] [--dashboard-port <port>]`
+- `bpg down [process_file] [--local-dir <dir>]`
+- `bpg logs [--local-dir <dir>] [--service <name>]`
 - `bpg apply <process_file>`
 - `bpg run <process_name> [--input FILE]`
 - `bpg status [run_id] [--process PROCESS_NAME]`
@@ -56,6 +60,40 @@ uv run bpg status <run_id>
   - Performs drift check against saved process hash before writing.
   - Deploys/undeploys provider artifacts for changed nodes.
   - Persists process record with incremented version.
+- `package`
+  - If `process_file` is omitted, defaults to `process.bpg.yaml` then `process.bpg.yml` in current directory.
+  - Validates and compiles process definition.
+  - Infers internal services for docker compose (defaults to postgres ledger for package mode).
+  - Generates artifact-only output in the requested directory:
+    - `docker-compose.yml`
+    - `.env.example`
+    - `.env`
+    - `process.bpg.yaml`
+    - `README.md`
+    - `package-metadata.json`
+    - `Dockerfile` (default package mode)
+    - `pyproject.toml` (default package mode)
+    - `uv.lock` (default package mode)
+    - `src/**/*.py` (default package mode)
+  - Missing required env vars are warnings, not hard failures.
+  - Unresolved required vars are emitted in `.env` as `KEY=__REQUIRED__`.
+  - `--dashboard` includes a `dashboard` service and API/UI container in generated compose artifacts.
+  - Default package mode is local-buildable (`docker compose up --build`) and does not require pulling a registry image.
+  - `--image` (or `BPG_PACKAGE_IMAGE`) switches package mode to an explicit image reference.
+- `up`
+  - If `process_file` is omitted, defaults to `process.bpg.yaml` then `process.bpg.yml` in current directory.
+  - Builds a local runtime bundle using the same inference model as `package` with local defaults.
+  - Builds local image `bpg-local:dev` from the current repository before `docker compose up -d`.
+  - Starts services via `docker compose up -d`.
+  - Fails hard if required vars are unresolved.
+  - `--dashboard` prints a local dashboard URL (default `http://localhost:8080`).
+- `down`
+  - If `--local-dir` is set, uses that directory directly.
+  - Otherwise, if `process_file` is provided (or default `process.bpg.yaml`/`process.bpg.yml` exists), it infers local runtime dir as `.bpg/local/<process_name>`.
+  - If neither process file exists nor `--local-dir` is provided, falls back to legacy inference from `.bpg/local/default` (single-directory inference).
+  - Stops local runtime services via `docker compose down`.
+- `logs`
+  - Streams local runtime logs via `docker compose logs --tail 200`.
 - `run`
   - Loads deployed process by `metadata.name`.
   - Accepts YAML or JSON input via `--input`; defaults to `{}`.
@@ -111,6 +149,14 @@ uv run bpg status <run_id>
 - `flow.fanout`
 - `flow.await_all`
 - `bpg.process_call`
+- `text.parse_numbers`
+- `math.sum_numbers`
+- `tool.web_search`
+- `notify.email`
+
+`tool.web_search` and `notify.email` support dry-run mode via either:
+- node config: `dry_run: true`
+- env: `BPG_DRY_RUN=1` or `BPG_EXECUTION_MODE=dry-run`
 
 ## State Layout
 Default state root is `.bpg-state` (override with `--state-dir`).

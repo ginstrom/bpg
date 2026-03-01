@@ -102,7 +102,7 @@ class Engine:
             raise EngineError(f"Run {run_id!r} not found")
 
         status = run_record.get("status", "running")
-        if status in {"completed", "failed", "cancelled"}:
+        if status in {"completed", "cancelled"}:
             return
 
         input_payload = run_record.get("input", {})

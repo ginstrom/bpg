@@ -32,6 +32,7 @@
 15. [Future Extensions](#15-future-extensions)
    - 15.1 [Near-Term Delivery Priorities](#151-near-term-delivery-priorities)
 16. [Full Example: Bug Triage Process](#16-full-example-bug-triage-process)
+17. [Operational Packaging & Local Runtime (Implemented)](#17-operational-packaging--local-runtime-implemented)
 
 ---
 
@@ -968,6 +969,51 @@ policy:
     - node: triage
       redact_fields: [reporter_email]
 ```
+
+---
+
+## 17. Operational Packaging & Local Runtime (Implemented)
+
+The current implementation supports two operational paths:
+
+- `bpg up [process_file]` for local runtime startup.
+- `bpg package [process_file]` for artifact generation and handoff.
+- `bpg down [process_file]` for local runtime teardown.
+
+### 17.1 Local Runtime (`bpg up`)
+
+- If `process_file` is omitted, CLI defaults to `process.bpg.yaml` then `process.bpg.yml` in current directory.
+- Uses shared runtime inference with local defaults.
+- Defaults ledger backend to `sqlite-file` unless overridden by policy tags.
+- Builds local image `bpg-local:dev` from the current repository.
+- Writes compose/runtime artifacts to `.bpg/local/<process_name>` (default).
+- Runs services via `docker compose up -d`.
+- Fails hard when required environment variables are unresolved.
+
+### 17.2 Package Runtime (`bpg package`)
+
+- If `process_file` is omitted, CLI defaults to `process.bpg.yaml` then `process.bpg.yml` in current directory.
+- Uses shared runtime inference with package defaults.
+- Defaults ledger backend to `postgres` unless overridden by policy tags.
+- Missing required environment variables are warning-only during packaging.
+- Default package output is locally buildable and includes:
+  - `docker-compose.yml`, `.env`, `.env.example`, `process.bpg.yaml`, `README.md`, `package-metadata.json`
+  - Runtime build inputs: `Dockerfile`, `pyproject.toml`, `uv.lock`, and `src/**/*.py`
+- Default run path is `docker compose up --build`.
+- If `--image` or `BPG_PACKAGE_IMAGE` is set, package compose uses that explicit image instead of local-build mode.
+
+### 17.3 Local Teardown (`bpg down`)
+
+- `--local-dir` explicitly selects the compose runtime directory.
+- Without `--local-dir`, CLI resolves local runtime dir from `process_file` metadata name:
+  - explicit `process_file` argument, or
+  - inferred default file (`process.bpg.yaml` then `process.bpg.yml`).
+- If no process file is available, CLI falls back to legacy `.bpg/local/default` single-directory inference.
+
+### 17.4 Dashboard Runtime
+
+- `--dashboard` adds a dashboard service in local and package compose outputs.
+- `--dashboard-port` configures host/container port mapping (default `8080`).
 
 ---
 
