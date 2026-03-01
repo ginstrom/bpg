@@ -38,7 +38,14 @@ def _compute_positions(
         if e.source in node_set and e.target in node_set:
             out_adj[e.source].append(e.target)
 
-    topo: list[str] = list(topological_order)
+    topo: list[str] = [n for n in topological_order if n in node_set]
+    if not topo:
+        topo = list(node_names)
+    else:
+        # Ensure nodes omitted from topo are still rendered deterministically.
+        for n in node_names:
+            if n not in topo:
+                topo.append(n)
 
     # Assign layer = max(layer[pred] + 1)
     layer: dict[str, int] = {n: 0 for n in node_names}

@@ -49,3 +49,13 @@ def test_generate_html_smoke():
     assert "start" in html
     assert "finish" in html
     assert "viz-test" in html
+
+
+def test_generate_html_falls_back_when_topological_order_is_empty():
+    p = _make_process()
+    validate_process(p)
+    ir = compile_process(p)
+    ir.topological_order = []
+    html = generate_html(ir)
+    assert "start" in html
+    assert "finish" in html

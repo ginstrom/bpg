@@ -1,4 +1,12 @@
-from bpg.models.schema import Process, ProcessMetadata, NodeInstance, Edge, NodeType, TypeDef
+from bpg.models.schema import (
+    Process,
+    ProcessMetadata,
+    NodeInstance,
+    Edge,
+    NodeType,
+    TypeDef,
+    ModuleDefinition,
+)
 from bpg.compiler.planner import Plan, ImmutabilityError
 from bpg.compiler.ir import compile_process
 from bpg.compiler.validator import validate_process
@@ -167,3 +175,65 @@ def test_plan_node_type_non_breaking_change_allowed():
     # Actually, if we use the same NodeType key, do we detect it?
     # Yes, Plan compares node_type objects.
     assert plan.modified_nodes == ["n1"]
+
+
+def test_plan_module_change_without_version_bump_blocks():
+    old_p = Process(
+        metadata=ProcessMetadata(name="test", version="1.0"),
+        types={"T": TypeDef(root={"value": "string"})},
+        node_types={
+            "mock@v1": NodeType(
+                **{
+                    "in": "T",
+                    "out": "T",
+                    "provider": "mock",
+                    "version": "v1",
+                    "config_schema": {},
+                }
+            )
+        },
+        modules={
+            "m@v1": ModuleDefinition(
+                version="v1",
+                inputs={"in_value": "T"},
+                nodes={"worker": NodeInstance(type="mock@v1", config={})},
+                edges=[
+                    Edge(
+                        **{
+                            "from": "__input__",
+                            "to": "worker",
+                            "with": {"value": "__input__.in.in_value.value"},
+                        }
+                    )
+                ],
+                outputs={"value": "worker.out.value"},
+            )
+        },
+        nodes={"n1": NodeInstance(type="mock@v1", config={})},
+        edges=[],
+        trigger="n1",
+    )
+    new_p = old_p.model_copy(
+        update={
+            "modules": {
+                "m@v1": ModuleDefinition(
+                    version="v1",
+                    inputs={"in_value": "T"},
+                    nodes={"worker": NodeInstance(type="mock@v1", config={})},
+                    edges=[
+                        Edge(
+                            **{
+                                "from": "__input__",
+                                "to": "worker",
+                                "with": {"value": "__input__.in.in_value.value"},
+                                "when": "__input__.in.in_value.value != ''",
+                            }
+                        )
+                    ],
+                    outputs={"value": "worker.out.value"},
+                )
+            }
+        }
+    )
+    with pytest.raises(ImmutabilityError, match="Module 'm@v1'"):
+        Plan(new_ir=_ir(new_p), old_ir=_ir(old_p))

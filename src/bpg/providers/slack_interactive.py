@@ -241,6 +241,14 @@ class SlackInteractiveProvider(Provider):
     def cancel(self, handle: ExecutionHandle) -> None:
         """No-op: Slack messages are not retracted on cancellation."""
 
+    def packaging_requirements(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        _ = config
+        return {
+            "services": [],
+            "required_env": ["SLACK_BOT_TOKEN"],
+            "optional_env": ["SLACK_SIGNING_SECRET"],
+        }
+
     def save_response(self, idempotency_key: str, output: Dict[str, Any]) -> None:
         """Persist the human response; call this from the Slack callback webhook.
 

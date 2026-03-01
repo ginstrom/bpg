@@ -83,6 +83,8 @@ class MockProvider(Provider):
         self.calls: List[_InvocationRecord] = []
         # Deploy call log
         self.deploy_calls: List[Dict[str, Any]] = []
+        # Undeploy call log
+        self.undeploy_calls: List[Dict[str, Any]] = []
         # Canned deploy artifacts by node name
         self._deploy_artifacts: Dict[str, Dict[str, Any]] = {}
 
@@ -241,3 +243,16 @@ class MockProvider(Provider):
         """Record the deploy call and return any registered canned artifacts."""
         self.deploy_calls.append({"node_name": node_name, "config": dict(config)})
         return self._deploy_artifacts.get(node_name, {})
+
+    def undeploy(
+        self,
+        node_name: str,
+        config: Dict[str, Any],
+        artifacts: Dict[str, Any],
+    ) -> None:
+        """Record the undeploy call."""
+        self.undeploy_calls.append({
+            "node_name": node_name,
+            "config": dict(config),
+            "artifacts": dict(artifacts),
+        })

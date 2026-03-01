@@ -83,7 +83,7 @@ class Plan:
         self._validate_immutability(old_process, new_process)
 
     def _validate_immutability(self, old_process, new_process) -> None:
-        """Enforce BPG §11 rules for types and node types."""
+        """Enforce BPG §11 rules for types, node types, and modules."""
         # 1. Types are immutable once published
         for name, old_type in old_process.types.items():
             if name in new_process.types:
@@ -104,6 +104,16 @@ class Plan:
                             f"Node type {name!r} (version {new_nt.version}) has a breaking "
                             f"change: {reason}. You must bump the version to apply this change."
                         )
+
+        # 3. Modules require version bump when changed
+        for name, old_module in old_process.modules.items():
+            if name in new_process.modules:
+                new_module = new_process.modules[name]
+                if new_module.version == old_module.version and new_module != old_module:
+                    raise ImmutabilityError(
+                        f"Module {name!r} (version {new_module.version}) changed without a "
+                        "version bump. Breaking changes require a new module version."
+                    )
 
     def _edge_id(self, e: Edge) -> str:
         """Unique identifier for an edge to detect additions/removals."""
