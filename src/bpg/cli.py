@@ -57,6 +57,11 @@ _PLACEHOLDER_VALUES = {
 _DEFAULT_PROCESS_FILENAMES = ("process.bpg.yaml", "process.bpg.yml")
 
 
+def main() -> None:
+    """Console entrypoint for installed `bpg` command."""
+    app()
+
+
 def _looks_like_placeholder(value: object) -> bool:
     if not isinstance(value, str):
         return False

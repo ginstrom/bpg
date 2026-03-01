@@ -7,6 +7,19 @@ BPG (Business Process Graph) lets you define typed workflow graphs in YAML, prev
 - Python 3.12+
 - `uv`
 
+## Install As App (GitHub)
+Install globally as a CLI app:
+
+```bash
+uv tool install "git+https://github.com/<org>/<repo>.git"
+```
+
+Alternative:
+
+```bash
+pipx install "git+https://github.com/<org>/<repo>.git"
+```
+
 ## Setup
 ```bash
 uv venv

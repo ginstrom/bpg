@@ -3,6 +3,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from bpg.cli import app
+import bpg.cli as cli_module
 from bpg.state.store import StateStore
 
 
@@ -122,3 +123,14 @@ def test_cleanup_invalid_duration_fails(tmp_path: Path):
     )
     assert result.exit_code == 1
     assert "invalid --older-than value" in result.stderr
+
+
+def test_main_invokes_typer_app(monkeypatch):
+    called = {"ok": False}
+
+    def _fake_app():
+        called["ok"] = True
+
+    monkeypatch.setattr(cli_module, "app", _fake_app)
+    cli_module.main()
+    assert called["ok"] is True

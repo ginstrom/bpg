@@ -2,6 +2,7 @@
 name = "bpg"
 version = "0.1.0"
 description = "Business Process Graph — declarative, infrastructure-as-code system for business workflows"
+readme = "README.md"
 authors = [
     { name = "ginstrom", email = "r-ginstrom@mercari.com" }
 ]
@@ -14,8 +15,12 @@ dependencies = [
     "typer>=0.24.1",
 ]
 
+[project.urls]
+Homepage = "https://github.com/<org>/<repo>"
+Repository = "https://github.com/<org>/<repo>"
+
 [project.scripts]
-bpg = "bpg.cli:app"
+bpg = "bpg.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.9.17,<0.10.0"]
