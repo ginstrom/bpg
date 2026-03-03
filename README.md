@@ -5,7 +5,7 @@ Business Process Graph (BPG) is a declarative workflow system for defining, pack
 ## Motivating Example: Search Ingestion Pipeline
 
 <a href="docs/assets/search-ingest-pipeline.png">
-  <img src="docs/assets/search-ingest-pipeline.png" alt="Search ingestion pipeline" width="420" />
+  <img src="docs/assets/search-ingest-pipeline.png" alt="Search ingestion pipeline" width="320" />
 </a>
 
 <sub>Click the image to open the full-resolution diagram.</sub>

@@ -28,9 +28,22 @@ mkdir -p "${ASSET_DIR}"
 
 uv run bpg visualize examples/search/ingest.bpg.yaml --output-dir docs/assets
 
+SVG_SIZE="$(grep -o 'width="[0-9]\+" height="[0-9]\+"' "${HTML_FILE}" | head -n1 || true)"
+if [[ -n "${SVG_SIZE}" ]]; then
+  SVG_W="$(echo "${SVG_SIZE}" | sed -E 's/.*width="([0-9]+)".*/\1/')"
+  SVG_H="$(echo "${SVG_SIZE}" | sed -E 's/.*height="([0-9]+)".*/\1/')"
+else
+  SVG_W=1200
+  SVG_H=1200
+fi
+
+# Add margin so labels/shadows are not clipped at edges.
+CAP_W=$((SVG_W + 80))
+CAP_H=$((SVG_H + 120))
+
 google-chrome --headless --disable-gpu \
   --screenshot="${PNG_FILE}" \
-  --window-size=1200,900 \
+  --window-size="${CAP_W},${CAP_H}" \
   "file://${HTML_FILE}"
 
 TMP_BLOCK="$(mktemp)"
