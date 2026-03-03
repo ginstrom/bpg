@@ -94,6 +94,7 @@ uv run bpg status <run_id>
 - `doctor`
   - Runs parse + validate + compile checks without mutating state.
   - `--json` emits `{ok, errors[]}` suitable for agent repair loops.
+  - `when` expression errors use `E_EXPR_*` codes with edge path and column metadata.
 - `fmt`
   - Canonicalizes process YAML ordering and mapping key order.
   - `--check` returns non-zero when file is not canonical.

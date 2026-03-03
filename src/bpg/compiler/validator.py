@@ -20,6 +20,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict
 from bpg.compiler.errors import CompilerDiagnostic
+from bpg.compiler.expr_lint import ExprLintError, lint_when_expression
 from bpg.compiler.types import FieldType, parse_field_type
 from bpg.models.schema import Process, TypeDef, NodeInstance, NodeType, ModuleDefinition
 
@@ -521,7 +522,7 @@ def validate_graph_structure(
             visit(node)
 
     # Edge mappings and when expressions
-    for edge in edges:
+    for edge_idx, edge in enumerate(edges):
         src, tgt = edge.source, edge.target
         target_node = resolved_nodes[tgt]
         in_type = target_node.in_type
@@ -546,7 +547,7 @@ def validate_graph_structure(
 
         # When expressions
         if edge.when:
-            _parse_when(edge.when, src, tgt)
+            _parse_when(edge.when, src, tgt, edge_index=edge_idx)
 
     # Required input coverage per target across all incoming edges
     incoming_by_target: Dict[str, List[Edge]] = {}
@@ -1056,7 +1057,7 @@ class _Parser:
         raise _ParseError(f"unexpected token {value!r}")
 
 
-def _parse_when(expr: str, src: str, tgt: str) -> None:
+def _parse_when(expr: str, src: str, tgt: str, *, edge_index: int) -> None:
     """Validate a single ``when`` expression string.
 
     Args:
@@ -1068,13 +1069,24 @@ def _parse_when(expr: str, src: str, tgt: str) -> None:
         ValidationError: On any syntax error.
     """
     try:
-        tokens = _tokenize(expr)
-        if not tokens:
-            raise _ParseError("empty expression")
-        _Parser(tokens).parse()
-    except _ParseError as exc:
+        lint_when_expression(expr)
+    except ExprLintError as exc:
+        detail = f"at column {exc.column}" if exc.column is not None else "at unknown column"
+        fix = (
+            "Use only comparisons, boolean operators, path references, and is_null/is_present checks."
+        )
+        schema_excerpt = {
+            "allowed_grammar": "expr := or_expr; or_expr := and_expr ('||' and_expr)*; and_expr := not_expr ('&&' not_expr)*; cmp := primary (op primary)?",
+            "column": exc.column,
+        }
+        if exc.token is not None:
+            schema_excerpt["token"] = exc.token.value
         raise ValidationError(
-            f"Edge {src!r} -> {tgt!r}: invalid when expression: {exc}"
+            f"Edge {src!r} -> {tgt!r}: invalid when expression {detail}: {exc.message}",
+            code=exc.code,
+            path=f"$.edges[{edge_index}].when",
+            fix=fix,
+            schema_excerpt=schema_excerpt,
         )
 
 
