@@ -188,6 +188,7 @@ uv run bpg doctor process.bpg.yaml --json
 uv run bpg fmt process.bpg.yaml --check
 uv run bpg suggest-fix process.bpg.yaml --json
 uv run bpg apply-patch process.bpg.yaml patch.json
+uv run bpg test suite.bpg.test.yaml --json
 uv run bpg plan process.bpg.yaml --json-errors
 ```
 

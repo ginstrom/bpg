@@ -44,6 +44,7 @@ from bpg.compiler.errors import CompilerDiagnostic
 from bpg.compiler.formatter import format_process_file
 from bpg.compiler.patching import PatchApplyError, apply_json_patch, load_patch_file
 from bpg.compiler.normalize import normalize_process_dict
+from bpg.testing.runner import run_spec_test_suite
 from bpg.packaging import (
     build_runtime_spec,
 )
@@ -832,6 +833,41 @@ def fmt(
         return
 
     console.print(formatted, end="")
+
+
+@app.command("test")
+def run_spec_tests(
+    suite_file: Path = typer.Argument(
+        ...,
+        help="Path to spec test suite YAML.",
+        exists=True,
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable test results.",
+    ),
+) -> None:
+    """Run spec-level process tests with mocks and routing assertions."""
+    try:
+        result = run_spec_test_suite(suite_file)
+    except Exception as e:
+        err_console.print(f"Error: {e}")
+        raise typer.Exit(code=1)
+
+    if json_output:
+        console.print_json(json.dumps(result, sort_keys=True))
+    else:
+        console.print(
+            f"Suite: {result['suite']}  passed={result['passed']} failed={result['failed']} total={result['total']}"
+        )
+        for case in result["cases"]:
+            mark = "PASS" if case["passed"] else "FAIL"
+            console.print(f"- {mark} {case['name']}")
+            for err in case["errors"]:
+                console.print(f"    {err}")
+
+    raise typer.Exit(code=0 if result["failed"] == 0 else 1)
 
 
 @app.command()
