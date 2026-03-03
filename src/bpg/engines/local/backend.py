@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from bpg.engines.langgraph.backend import LangGraphExecutionBackend
+from bpg.compiler.ir import compile_process
+from bpg.compiler.validator import validate_process
+from bpg.providers import PROVIDER_REGISTRY
+from bpg.runtime.orchestrator import BpgOrchestrator, ProviderNodeExecutionAdapter
 
 
 class LocalExecutionBackend:
@@ -15,9 +18,6 @@ class LocalExecutionBackend:
 
     name = "local"
 
-    def __init__(self) -> None:
-        self._delegate = LangGraphExecutionBackend()
-
     def run(
         self,
         *,
@@ -27,10 +27,18 @@ class LocalExecutionBackend:
         input_payload: Dict[str, Any],
         cached_results: Dict[str, Dict[str, Any]],
     ) -> Dict[str, Any]:
-        return self._delegate.run(
-            process=process,
-            state_store=state_store,
-            run_id=run_id,
-            input_payload=input_payload,
-            cached_results=cached_results,
-        )
+        _ = state_store
+        _ = cached_results
+        validate_process(process)
+        ir = compile_process(process)
+
+        providers: Dict[str, Any] = {}
+        for provider_id, cls in PROVIDER_REGISTRY.items():
+            try:
+                providers[provider_id] = cls()
+            except Exception:
+                continue
+
+        adapter = ProviderNodeExecutionAdapter(providers)
+        orchestrator = BpgOrchestrator(ir=ir, node_adapter=adapter)
+        return orchestrator.run(input_payload=input_payload, run_id=run_id)

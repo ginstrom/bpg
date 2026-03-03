@@ -14,6 +14,7 @@ The runtime implements the node execution semantics defined in §7 of the spec:
 from bpg.runtime.engine import Engine, EngineError
 from bpg.runtime.langgraph_runtime import LangGraphRuntime
 from bpg.runtime.backends import available_backends, get_backend
+from bpg.runtime.orchestrator import BpgOrchestrator, ProviderNodeExecutionAdapter
 from bpg.runtime.observability import (
     EventSink,
     ListEventSink,
@@ -27,6 +28,8 @@ __all__ = [
     "Engine",
     "EngineError",
     "LangGraphRuntime",
+    "BpgOrchestrator",
+    "ProviderNodeExecutionAdapter",
     "available_backends",
     "get_backend",
     "EventSink",
