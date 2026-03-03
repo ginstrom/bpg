@@ -28,6 +28,8 @@ app = typer.Typer(
     no_args_is_help=True,
     pretty_exceptions_show_locals=False,
 )
+providers_app = typer.Typer(help="Provider discovery and metadata.")
+app.add_typer(providers_app, name="providers")
 
 console = Console()
 err_console = Console(stderr=True, style="bold red")
@@ -44,7 +46,11 @@ from bpg.packaging import (
 )
 from bpg.runtime.orchestration import build_image_command, compose_command, write_runtime_bundle
 from bpg.state.store import StateStore
-from bpg.providers import PROVIDER_REGISTRY
+from bpg.providers import (
+    PROVIDER_REGISTRY,
+    describe_provider_metadata,
+    list_provider_metadata,
+)
 from bpg.providers.loader import ProviderRegistryError, load_declared_providers
 
 
@@ -371,6 +377,56 @@ def _looks_like_import_registry_file(process_file: Path) -> bool:
         key in raw for key in ("types", "node_types", "modules", "imports")
     )
     return has_registry_content
+
+
+@providers_app.command("list")
+def providers_list(
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable provider metadata.",
+    ),
+) -> None:
+    """List registered providers."""
+    items = list_provider_metadata()
+    if json_output:
+        console.print_json(
+            json.dumps(
+                {"providers": [item.model_dump(mode="json") for item in items]},
+                sort_keys=True,
+            )
+        )
+        return
+    for item in items:
+        console.print(f"- {item.name}: {item.description}")
+
+
+@providers_app.command("describe")
+def providers_describe(
+    provider: str = typer.Argument(..., help="Provider ID, for example http.webhook."),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable provider metadata.",
+    ),
+) -> None:
+    """Describe one provider."""
+    try:
+        meta = describe_provider_metadata(provider)
+    except KeyError:
+        err_console.print(f"Unknown provider: {provider}")
+        raise typer.Exit(code=1)
+
+    payload = meta.model_dump(mode="json")
+    if json_output:
+        console.print_json(json.dumps(payload, sort_keys=True))
+        return
+
+    console.print(f"[bold]{payload['name']}[/bold]")
+    console.print(payload["description"])
+    console.print(
+        f"side_effects={payload['side_effects']} idempotency={payload['idempotency']} latency={payload['latency_class']}"
+    )
 
 
 @app.command()

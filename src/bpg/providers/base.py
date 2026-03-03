@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, ClassVar, Dict, Optional
 
+from bpg.providers.metadata import default_provider_metadata, ProviderMetadata
 
 # ---------------------------------------------------------------------------
 # Idempotency key
@@ -173,6 +174,11 @@ class Provider(ABC):
 
     #: Unique identifier for this provider type, e.g. ``"http.webhook"``.
     provider_id: ClassVar[str]
+
+    @classmethod
+    def metadata(cls) -> ProviderMetadata:
+        """Return machine-readable provider metadata."""
+        return default_provider_metadata(cls.provider_id, cls)
 
     @abstractmethod
     def invoke(

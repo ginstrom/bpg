@@ -196,6 +196,13 @@ uv run bpg run <process-name> --input input.yaml --engine langgraph
 uv run bpg run <process-name> --input input.yaml --engine local
 ```
 
+## Provider Discovery
+
+```bash
+uv run bpg providers list --json
+uv run bpg providers describe mock --json
+```
+
 ## Search Example
 
 Runnable ingestion/retrieval example graphs are in `examples/search/`.

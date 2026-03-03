@@ -42,6 +42,8 @@ from bpg.providers import (
     WebSearchProvider,
     WebhookProvider,
     compute_idempotency_key,
+    describe_provider_metadata,
+    list_provider_metadata,
 )
 from bpg.providers.base import ExecutionContext, ExecutionHandle, ExecutionStatus
 
@@ -480,6 +482,18 @@ class TestProviderRegistry:
             "tool.web_search",
             "notify.email",
         }
+
+    def test_registry_metadata_is_available_for_all_providers(self):
+        metadata = list_provider_metadata()
+        names = {item.name for item in metadata}
+        assert names == set(PROVIDER_REGISTRY.keys())
+        for item in metadata:
+            assert item.description
+            assert item.examples
+
+    def test_describe_provider_metadata_returns_named_provider(self):
+        meta = describe_provider_metadata("mock")
+        assert meta.name == "mock"
 
 
 class TestBuiltInProviders:

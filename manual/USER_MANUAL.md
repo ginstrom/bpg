@@ -50,6 +50,8 @@ Available commands:
 - `bpg run <process_name> [--input FILE] [--state-dir <dir>] [--providers-file <path>] [--engine langgraph|local]`
 - `bpg status [run_id] [--process PROCESS_NAME] [--state-dir <dir>]`
 - `bpg cleanup [--process PROCESS_NAME] [--older-than DURATION] [--status LIST] [--dry-run] [--state-dir <dir>]`
+- `bpg providers list [--json]`
+- `bpg providers describe <provider> [--json]`
 
 ## Typical Workflow
 1. Edit a process file (for example `process.bpg.yaml`).
@@ -155,6 +157,12 @@ uv run bpg status <run_id>
   - `--older-than` accepts duration literals such as `30d` or `12h`.
   - `--status` filters target runs by status (comma-separated).
   - `--dry-run` previews deletions without removing anything.
+- `providers list`
+  - Lists registered providers.
+  - `--json` emits machine-readable provider metadata.
+- `providers describe`
+  - Prints detailed metadata for a single provider.
+  - `--json` emits full provider metadata payload.
 - `visualize`
   - Generates HTML graph at `.bpg/viz/<process_file_stem>.html` (or `--output-dir`).
   - `--open` opens the generated HTML in the default browser.

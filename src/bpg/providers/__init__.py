@@ -61,6 +61,7 @@ from bpg.providers.builtin import (
     WeaviateUpsertProvider,
     WebSearchProvider,
 )
+from bpg.providers.metadata import ProviderMetadata
 
 
 __all__ = [
@@ -92,6 +93,9 @@ __all__ = [
     "SumNumbersProvider",
     "WebSearchProvider",
     "PROVIDER_REGISTRY",
+    "ProviderMetadata",
+    "list_provider_metadata",
+    "describe_provider_metadata",
 ]
 
 PROVIDER_REGISTRY: dict[str, type[Provider]] = {
@@ -126,3 +130,17 @@ Example::
     provider = provider_cls()
     handle = provider.invoke(input, config, context)
 """
+
+
+def list_provider_metadata() -> list[ProviderMetadata]:
+    """Return metadata for every registered provider in deterministic order."""
+    items: list[ProviderMetadata] = []
+    for provider_id in sorted(PROVIDER_REGISTRY):
+        items.append(PROVIDER_REGISTRY[provider_id].metadata())
+    return items
+
+
+def describe_provider_metadata(provider_id: str) -> ProviderMetadata:
+    """Return metadata for a provider ID or raise KeyError."""
+    provider_cls = PROVIDER_REGISTRY[provider_id]
+    return provider_cls.metadata()
