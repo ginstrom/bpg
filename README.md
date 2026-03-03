@@ -19,6 +19,11 @@ BPG brings infrastructure-as-code discipline to business processes:
 
 In short: BPG makes workflow automation reliable enough to manage like infrastructure.
 
+### AI Agent-Friendly
+
+The structured and text-based nature of BPG makes it especially suited to
+agent-driven app development.
+
 ## Motivating Example: Search Ingestion Pipeline
 
 <a href="docs/assets/search-ingest-pipeline.png">
