@@ -1,6 +1,23 @@
 # BPG
 
-Business Process Graph (BPG) is a declarative workflow system for defining, packaging, and running typed business process graphs.
+Business Process Graph (BPG) a "business process as code" tool that is inspired
+heavily by terraform.
+
+It is a declarative workflow system for defining, packaging, and running typed business process graphs.
+
+## Why BPG
+
+Most workflow automation starts as scripts and ad-hoc integrations, then becomes hard to reason about and operate safely.
+
+BPG brings infrastructure-as-code discipline to business processes:
+
+- `plan/apply` lifecycle for controlled changes
+- typed node contracts for reliable composition
+- deterministic, idempotent execution behavior
+- immutable run/event logs for audit and debugging
+- reproducible local and packaged runtime environments
+
+In short: BPG makes workflow automation reliable enough to manage like infrastructure.
 
 ## Motivating Example: Search Ingestion Pipeline
 
