@@ -53,6 +53,7 @@ Available commands:
 - `bpg apply <process_file> [--state-dir <dir>] [--auto-approve] [--providers-file <path>]`
 - `bpg run <process_name> [--input FILE] [--state-dir <dir>] [--providers-file <path>] [--engine langgraph|local]`
 - `bpg status [run_id] [--process PROCESS_NAME] [--state-dir <dir>]`
+- `bpg replay <run_id> [--state-dir <dir>] [--json]`
 - `bpg cleanup [--process PROCESS_NAME] [--older-than DURATION] [--status LIST] [--dry-run] [--state-dir <dir>]`
 - `bpg providers list [--json]`
 - `bpg providers describe <provider> [--json]`
@@ -172,6 +173,9 @@ uv run bpg status <run_id>
 - `status`
   - No `run_id`: lists runs (optionally filtered by `--process`).
   - With `run_id`: prints run metadata and per-node record summaries.
+- `replay`
+  - Reconstructs derived run/node status from append-only events.
+  - `--json` emits structured replay output for automation.
 - `cleanup`
   - Prunes run records from local state.
   - `--older-than` accepts duration literals such as `30d` or `12h`.

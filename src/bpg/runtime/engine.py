@@ -21,6 +21,7 @@ from typing import Any, Dict
 
 from bpg.models.schema import Process
 from bpg.runtime.backends import get_backend
+from bpg.runtime.events import normalize_event
 
 
 class EngineError(Exception):
@@ -144,9 +145,25 @@ class Engine:
             cached_results=cached_results,
         )
 
+        self._state_store.append_execution_event(
+            run_id,
+            normalize_event(
+                {
+                    "event_type": "run_started",
+                    "run_id": run_id,
+                    "process_name": (
+                        self._process.metadata.name if self._process.metadata else "default"
+                    ),
+                    "status": "running",
+                    "started_at": datetime.now(timezone.utc).isoformat(),
+                },
+                run_id=run_id,
+            ),
+        )
         for entry in final_state.get("execution_log", []):
             node_name = entry.get("node")
-            self._state_store.append_execution_event(run_id, entry)
+            normalized_entry = normalize_event(entry, run_id=run_id)
+            self._state_store.append_execution_event(run_id, normalized_entry)
             if node_name:
                 self._state_store.save_node_record(run_id, node_name, entry)
 
@@ -159,6 +176,21 @@ class Engine:
         if "process_output" in final_state:
             updates["output"] = final_state["process_output"]
         self._state_store.update_run(run_id, updates)
+        self._state_store.append_execution_event(
+            run_id,
+            normalize_event(
+                {
+                    "event_type": "run_completed" if run_status == "completed" else "run_failed",
+                    "run_id": run_id,
+                    "process_name": (
+                        self._process.metadata.name if self._process.metadata else "default"
+                    ),
+                    "status": run_status,
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                },
+                run_id=run_id,
+            ),
+        )
         if "audit" in final_state and isinstance(final_state["audit"], dict):
             self._state_store.apply_audit_policy(
                 run_id=run_id,

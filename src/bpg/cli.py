@@ -49,6 +49,7 @@ from bpg.packaging import (
     build_runtime_spec,
 )
 from bpg.runtime.orchestration import build_image_command, compose_command, write_runtime_bundle
+from bpg.runtime.events import replay_state_from_events
 from bpg.state.store import StateStore
 from bpg.providers import (
     PROVIDER_REGISTRY,
@@ -907,6 +908,46 @@ def show(
     except Exception as e:
         err_console.print(f"Error: {e}")
         raise typer.Exit(code=1)
+
+
+@app.command()
+def replay(
+    run_id: str = typer.Argument(..., help="Run identifier."),
+    state_dir: Path = typer.Option(
+        Path(".bpg-state"),
+        "--state-dir",
+        help="Directory where BPG state is persisted.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable replay state JSON.",
+    ),
+) -> None:
+    """Rebuild run status from append-only event log."""
+    store = StateStore(state_dir)
+    run = store.load_run(run_id)
+    if run is None:
+        err_console.print(f"Run {run_id!r} not found")
+        raise typer.Exit(code=1)
+    events = store.load_execution_log(run_id)
+    replayed = replay_state_from_events(events)
+    payload = {
+        "run_id": run_id,
+        "stored_status": run.get("status"),
+        "replayed_status": replayed["run_status"],
+        "event_total": replayed["event_total"],
+        "event_counts": replayed["event_counts"],
+        "node_statuses": replayed["node_statuses"],
+    }
+    if json_output:
+        console.print_json(json.dumps(payload, sort_keys=True))
+        return
+    console.print(f"run_id={run_id}")
+    console.print(f"stored_status={payload['stored_status']} replayed_status={payload['replayed_status']}")
+    console.print(f"event_total={payload['event_total']}")
+    for name, status in sorted(payload["node_statuses"].items()):
+        console.print(f"- {name}: {status}")
 
 
 @app.command()

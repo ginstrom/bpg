@@ -79,7 +79,10 @@ def test_engine_step_executes_existing_running_run(tmp_path: Path):
         assert run["process_hash"] is not None
         assert run["process_record_version"] == 1
         events = store.load_execution_log(run_id)
-        assert len(events) == 2
-        assert {e["node"] for e in events} == {"start", "work"}
+        assert len(events) == 4
+        event_types = [e["event_type"] for e in events]
+        assert event_types[0] == "run_started"
+        assert event_types[-1] == "run_completed"
+        assert {e["node"] for e in events if "node" in e} == {"start", "work"}
     finally:
         PROVIDER_REGISTRY["mock"] = old_mock
