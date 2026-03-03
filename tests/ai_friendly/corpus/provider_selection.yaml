@@ -1,0 +1,7 @@
+cases:
+  - intent: "review customer onboarding requests"
+    expect_review_step: true
+  - intent: "extract customer ids from support tickets"
+    expect_review_step: false
+  - intent: "approve high-risk expense reports"
+    expect_review_step: true
