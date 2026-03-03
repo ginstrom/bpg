@@ -38,6 +38,7 @@ from bpg.compiler.validator import validate_process, ValidationError
 from bpg.compiler.visualizer import generate_html
 from bpg.compiler.ir import compile_process
 from bpg.compiler.planner import ImmutabilityError, Plan
+from bpg.compiler.errors import CompilerDiagnostic
 from bpg.packaging import (
     build_runtime_spec,
 )
@@ -318,6 +319,28 @@ def _print_show_summary(plan_doc: dict, plan_file: Path) -> None:
     )
 
 
+def _emit_error_json(exc: Exception) -> None:
+    diag = getattr(exc, "diagnostic", None)
+    if isinstance(diag, CompilerDiagnostic):
+        console.print_json(json.dumps({"errors": [diag.to_dict()]}, sort_keys=True))
+        return
+    console.print_json(
+        json.dumps(
+            {
+                "errors": [
+                    {
+                        "error_code": "E_UNKNOWN",
+                        "path": "$",
+                        "message": str(exc),
+                        "severity": "error",
+                    }
+                ]
+            },
+            sort_keys=True,
+        )
+    )
+
+
 def _looks_like_import_registry_file(process_file: Path) -> bool:
     """Return True when file appears to be an import/registry file, not a process graph."""
     try:
@@ -422,6 +445,11 @@ def plan(
         help=_PROVIDERS_FILE_HELP,
         exists=False,
     ),
+    json_errors: bool = typer.Option(
+        False,
+        "--json-errors",
+        help="Emit machine-readable diagnostics on plan errors.",
+    ),
 ) -> None:
     """Compile a process definition and show a diff against the current deployed state.
 
@@ -464,7 +492,10 @@ def plan(
         console.print("\nRun [bold]bpg apply[/bold] to deploy these changes.")
         
     except (ParseError, ValidationError, ImmutabilityError) as e:
-        err_console.print(f"Error: {e}")
+        if json_errors:
+            _emit_error_json(e)
+        else:
+            err_console.print(f"Error: {e}")
         raise typer.Exit(code=1)
     except Exception as e:
         err_console.print(f"Unexpected error: {e}")

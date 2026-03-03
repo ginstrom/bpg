@@ -18,16 +18,35 @@ from typing import Any, Dict
 
 import yaml
 
+from bpg.compiler.errors import CompilerDiagnostic
 from bpg.models.schema import Process
 
 
 class ParseError(Exception):
     """Raised when a .bpg.yaml file cannot be parsed into a valid structure."""
 
-    def __init__(self, message: str, file: Path | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        file: Path | None = None,
+        *,
+        code: str = "E_PARSE",
+        path: str = "$",
+        fix: str | None = None,
+        example_patch: list[dict[str, Any]] | None = None,
+        schema_excerpt: dict[str, Any] | None = None,
+    ) -> None:
         location = f" [{file}]" if file else ""
         super().__init__(f"ParseError{location}: {message}")
         self.file = file
+        self.diagnostic = CompilerDiagnostic(
+            error_code=code,
+            path=path,
+            message=message,
+            fix=fix,
+            example_patch=example_patch or [],
+            schema_excerpt=schema_excerpt or {},
+        )
 
 
 def load_yaml_file(path: Path) -> Dict[str, Any]:

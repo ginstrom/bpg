@@ -213,3 +213,39 @@ def test_main_invokes_typer_app(monkeypatch):
     monkeypatch.setattr(cli_module, "app", _fake_app)
     cli_module.main()
     assert called["ok"] is True
+
+
+def test_plan_json_errors_emits_structured_diagnostic(tmp_path: Path):
+    process_file = tmp_path / "process.bpg.yaml"
+    process_file.write_text(
+        """
+node_types:
+  ntype@v1:
+    in: object
+    out: object
+    provider: mock
+    version: v1
+    config_schema: {}
+nodes:
+  n1:
+    type: ntype@v1
+    config: {}
+trigger: n1
+edges: []
+"""
+    )
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            str(process_file),
+            "--state-dir",
+            str(tmp_path / "state"),
+            "--json-errors",
+        ],
+    )
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert "errors" in payload
+    assert payload["errors"][0]["error_code"] == "E_VALIDATION"
+    assert payload["errors"][0]["path"] == "$.types"

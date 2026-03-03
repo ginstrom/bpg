@@ -165,8 +165,12 @@ def test_validate_requires_non_empty_types_section():
         edges=[],
         trigger="start",
     )
-    with pytest.raises(ValidationError, match="at least one type definition"):
+    with pytest.raises(ValidationError, match="at least one type definition") as excinfo:
         validate_process(process)
+    diag = excinfo.value.diagnostic.to_dict()
+    assert diag["error_code"] == "E_VALIDATION"
+    assert diag["path"] == "$.types"
+    assert "at least one type definition" in diag["message"]
 
 
 def test_parse_process_import_cycle_raises(tmp_path: Path):
@@ -174,8 +178,12 @@ def test_parse_process_import_cycle_raises(tmp_path: Path):
     b = tmp_path / "b.bpg.yaml"
     a.write_text("imports: [b.bpg.yaml]\nnodes: {n1: {type: t@v1, config: {}}}\ntrigger: n1\nedges: []\n")
     b.write_text("imports: [a.bpg.yaml]\n")
-    with pytest.raises(ParseError, match="Import cycle"):
+    with pytest.raises(ParseError, match="Import cycle") as excinfo:
         parse_process_file(a)
+    diag = excinfo.value.diagnostic.to_dict()
+    assert diag["error_code"] == "E_PARSE"
+    assert diag["path"] == "$"
+    assert "Import cycle" in diag["message"]
 
 
 def test_validate_config_schema_dotted_nested_paths():

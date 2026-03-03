@@ -19,6 +19,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from typing import Any, Dict
+from bpg.compiler.errors import CompilerDiagnostic
 from bpg.compiler.types import FieldType, parse_field_type
 from bpg.models.schema import Process, TypeDef, NodeInstance, NodeType, ModuleDefinition
 
@@ -76,7 +77,18 @@ def resolve_typedef(name: str, typedef: TypeDef) -> ResolvedTypeDef:
 class ValidationError(Exception):
     """Raised when a process definition fails semantic validation."""
 
-    def __init__(self, message: str, node: str | None = None, field: str | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        node: str | None = None,
+        field: str | None = None,
+        *,
+        code: str = "E_VALIDATION",
+        path: str | None = None,
+        fix: str | None = None,
+        example_patch: list[dict[str, Any]] | None = None,
+        schema_excerpt: dict[str, Any] | None = None,
+    ) -> None:
         context = ""
         if node:
             context += f" (node={node!r}"
@@ -86,6 +98,15 @@ class ValidationError(Exception):
         super().__init__(f"ValidationError{context}: {message}")
         self.node = node
         self.field = field
+        diagnostic_path = path or (f"$.{field}" if field else "$")
+        self.diagnostic = CompilerDiagnostic(
+            error_code=code,
+            path=diagnostic_path,
+            message=message,
+            fix=fix,
+            example_patch=example_patch or [],
+            schema_excerpt=schema_excerpt or {},
+        )
 
 
 def validate_process(process: Process) -> None:
