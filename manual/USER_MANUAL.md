@@ -39,7 +39,7 @@ uv run bpg --help
 
 Available commands:
 - `bpg visualize <process_file> [--output-dir <dir>] [--open] [--providers-file <path>]`
-- `bpg plan <process_file> [--state-dir <dir>] [--out <plan-file>] [--providers-file <path>]`
+- `bpg plan <process_file> [--state-dir <dir>] [--out <plan-file>] [--providers-file <path>] [--explain] [--json]`
 - `bpg doctor <process_file> [--json] [--providers-file <path>]`
 - `bpg fmt <process_file> [--check] [--write|--no-write]`
 - `bpg apply-patch <process_file> <patch.json> [--in-place|--no-in-place]`
@@ -87,6 +87,8 @@ uv run bpg status <run_id>
   - Auto-loads custom provider registry from `bpg.providers.yaml`/`bpg.providers.yml` if present.
   - `--providers-file` can point to a non-default provider registry YAML.
   - `--out <plan-file>` writes deterministic plan artifact JSON (for CI/machine parsing).
+  - `--json` emits plan artifact JSON to stdout.
+  - `--explain` adds graph summary, schema diffs, compatibility warnings, and blast radius.
   - Parses + validates process YAML.
   - Compiles IR and shows diff against deployed process record.
   - Does not execute nodes.

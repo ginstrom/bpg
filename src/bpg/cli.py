@@ -309,6 +309,67 @@ def _build_plan_artifact(
     }
 
 
+def _build_plan_explain(
+    process_name: str,
+    process,
+    plan: Plan,
+    *,
+    store: StateStore,
+    old_process=None,
+) -> dict:
+    old_types = old_process.types if old_process else {}
+    new_types = process.types
+    old_type_names = set(old_types.keys())
+    new_type_names = set(new_types.keys())
+    changed_types = sorted(
+        name for name in (old_type_names & new_type_names) if old_types[name] != new_types[name]
+    )
+    schema_diffs = {
+        "added_types": sorted(new_type_names - old_type_names),
+        "removed_types": sorted(old_type_names - new_type_names),
+        "changed_types": changed_types,
+    }
+
+    warnings: list[str] = []
+    if plan.removed_nodes:
+        warnings.append(f"Removed nodes may break in-flight assumptions: {plan.removed_nodes}")
+    if schema_diffs["removed_types"] or schema_diffs["changed_types"]:
+        warnings.append(
+            "Type removals/changes detected; review downstream compatibility before apply."
+        )
+    if plan.trigger_changed:
+        warnings.append("Trigger changed; entrypoint behavior will differ for new runs.")
+
+    runs = store.list_runs(process_name=process_name)
+    active = [r for r in runs if str(r.get("status", "")) in {"running", "pending"}]
+    blast_radius = {
+        "active_runs_count": len(active),
+        "active_run_ids": [r.get("run_id") for r in active if r.get("run_id")][:10],
+        "affected_process_version": process.metadata.version if process.metadata else None,
+    }
+
+    return {
+        "graph_summary": {
+            "trigger": process.trigger,
+            "node_count": len(process.nodes),
+            "edge_count": len(process.edges),
+            "topological_order_count": len(plan.new_ir.topological_order),
+        },
+        "changed_nodes": {
+            "added": plan.added_nodes,
+            "modified": plan.modified_nodes,
+            "removed": plan.removed_nodes,
+        },
+        "changed_edges": {
+            "added": plan.added_edges,
+            "removed": plan.removed_edges,
+        },
+        "schema_diffs": schema_diffs,
+        "compatibility_warnings": warnings,
+        "blast_radius": blast_radius,
+    }
+
+
 def _print_show_summary(plan_doc: dict, plan_file: Path) -> None:
     process_name = plan_doc.get("process_name", "-")
     generated_at = plan_doc.get("generated_at", "-")
@@ -533,6 +594,16 @@ def plan(
         help=_PROVIDERS_FILE_HELP,
         exists=False,
     ),
+    explain: bool = typer.Option(
+        False,
+        "--explain",
+        help="Include graph, compatibility, and blast-radius explanation payload.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit plan artifact as JSON to stdout.",
+    ),
     json_errors: bool = typer.Option(
         False,
         "--json-errors",
@@ -567,10 +638,22 @@ def plan(
             state_dir=state_dir,
             old_process=old_process,
         )
+        if explain:
+            plan_doc["explain"] = _build_plan_explain(
+                process_name,
+                process,
+                plan,
+                store=store,
+                old_process=old_process,
+            )
         if out is not None:
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(json.dumps(plan_doc, indent=2, sort_keys=True) + "\n")
             console.print(f"[bold green]✓[/bold green] Plan artifact written: [cyan]{out}[/cyan]")
+
+        if json_output:
+            console.print_json(json.dumps(plan_doc, sort_keys=True))
+            return
         
         if plan.is_empty():
             console.print(f"[bold green]✓[/bold green] No changes detected for process [cyan]{process_name}[/cyan].")

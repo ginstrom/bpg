@@ -176,6 +176,7 @@ bpg --help
 
 ```bash
 uv run bpg plan process.bpg.yaml --out plan.out
+uv run bpg plan process.bpg.yaml --json --explain
 uv run bpg show --json plan.out
 uv run bpg show --json plan.out | jq '.changes'
 ```
