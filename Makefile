@@ -1,4 +1,4 @@
-.PHONY: dry-run-test-suite test test-unit test-e2e
+.PHONY: dry-run-test-suite test test-unit test-e2e build-docs
 
 dry-run-test-suite:
 	. .venv/bin/activate && uv run pytest -q tests/test_cli_plan.py
@@ -11,3 +11,6 @@ test:
 
 test-e2e:
 	. .venv/bin/activate && uv run pytest -q tests/e2e
+
+build-docs:
+	. .venv/bin/activate && ./scripts/build_docs.sh

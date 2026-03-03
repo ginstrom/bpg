@@ -1,0 +1,17 @@
+digraph SearchIngest {
+  rankdir=LR;
+  graph [fontname="Helvetica", bgcolor="white"];
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fillcolor="#eef6ff", color="#2b6cb0"];
+  edge [color="#4a5568", penwidth=1.4, arrowsize=0.8];
+
+  ingest_input [label="ingest_input\n(dashboard.form)"];
+  list_markdown [label="list_markdown\n(fs.markdown_list)"];
+  chunk_markdown [label="chunk_markdown\n(text.markdown_chunk)"];
+  embed_chunks [label="embed_chunks\n(embed.text)"];
+  write_weaviate [label="write_weaviate\n(weaviate.upsert)"];
+
+  ingest_input -> list_markdown [label="root_dir, glob"];
+  list_markdown -> chunk_markdown [label="documents"];
+  chunk_markdown -> embed_chunks [label="chunks"];
+  embed_chunks -> write_weaviate [label="items"];
+}

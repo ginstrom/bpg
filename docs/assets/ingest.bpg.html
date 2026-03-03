@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>BPG Visualizer — search-ingest</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #f8fafc;
+      font-family: system-ui, -apple-system, sans-serif;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 24px;
+    }
+    svg { display: block; max-width: 100%; height: auto; }
+  </style>
+</head>
+<body>
+  <svg xmlns="http://www.w3.org/2000/svg"
+       width="700" height="935"
+       viewBox="0 0 700 935">
+    <defs><filter id="sh" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0000001a"/></filter><marker id="ar" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#94a3b8"/></marker></defs>
+    <rect width="700" height="935" fill="#f8fafc"/>
+    <path d="M 350.0 155.0 C 350.0 195.0, 350.0 195.0, 350.0 235.0" fill="none" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#ar)"/>
+    <path d="M 350.0 330.0 C 350.0 370.0, 350.0 370.0, 350.0 410.0" fill="none" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#ar)"/>
+    <path d="M 350.0 505.0 C 350.0 545.0, 350.0 545.0, 350.0 585.0" fill="none" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#ar)"/>
+    <path d="M 350.0 680.0 C 350.0 720.0, 350.0 720.0, 350.0 760.0" fill="none" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#ar)"/>
+    <rect x="250" y="60" width="200" height="95" rx="8" fill="#f0f9ff" stroke="#0ea5e9" stroke-width="2" filter="url(#sh)"/>
+    <text x="350" y="86" font-family="system-ui,sans-serif" font-size="13" font-weight="bold" fill="#0c4a6e" text-anchor="middle">TRIGGER — ingest_input</text>
+    <text x="350" y="105" font-family="system-ui,sans-serif" font-size="11" fill="#64748b" text-anchor="middle">ingest_trigger@v1</text>
+    <text x="350" y="143" font-family="system-ui,sans-serif" font-size="9" fill="#94a3b8" text-anchor="middle">in: MarkdownIngestTrigger  →  out: MarkdownIngestTrigger</text>
+    <rect x="250" y="235" width="200" height="95" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" filter="url(#sh)"/>
+    <text x="350" y="261" font-family="system-ui,sans-serif" font-size="13" font-weight="600" fill="#0f172a" text-anchor="middle">list_markdown</text>
+    <text x="350" y="280" font-family="system-ui,sans-serif" font-size="11" fill="#64748b" text-anchor="middle">fs_markdown_list@v1</text>
+    <text x="350" y="318" font-family="system-ui,sans-serif" font-size="9" fill="#94a3b8" text-anchor="middle">in: MarkdownIngestTrigger  →  out: MarkdownDocumentList</text>
+    <rect x="250" y="410" width="200" height="95" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" filter="url(#sh)"/>
+    <text x="350" y="436" font-family="system-ui,sans-serif" font-size="13" font-weight="600" fill="#0f172a" text-anchor="middle">chunk_markdown</text>
+    <text x="350" y="455" font-family="system-ui,sans-serif" font-size="11" fill="#64748b" text-anchor="middle">markdown_chunk@v1</text>
+    <text x="350" y="493" font-family="system-ui,sans-serif" font-size="9" fill="#94a3b8" text-anchor="middle">in: MarkdownDocumentList  →  out: MarkdownChunkList</text>
+    <rect x="250" y="585" width="200" height="95" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" filter="url(#sh)"/>
+    <text x="350" y="611" font-family="system-ui,sans-serif" font-size="13" font-weight="600" fill="#0f172a" text-anchor="middle">embed_chunks</text>
+    <text x="350" y="630" font-family="system-ui,sans-serif" font-size="11" fill="#64748b" text-anchor="middle">chunk_embed@v1</text>
+    <text x="350" y="668" font-family="system-ui,sans-serif" font-size="9" fill="#94a3b8" text-anchor="middle">in: MarkdownChunkList  →  out: EmbeddingVectorList</text>
+    <rect x="250" y="760" width="200" height="95" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" filter="url(#sh)"/>
+    <text x="350" y="786" font-family="system-ui,sans-serif" font-size="13" font-weight="600" fill="#0f172a" text-anchor="middle">write_weaviate</text>
+    <text x="350" y="805" font-family="system-ui,sans-serif" font-size="11" fill="#64748b" text-anchor="middle">weaviate_upsert@v1</text>
+    <text x="350" y="843" font-family="system-ui,sans-serif" font-size="9" fill="#94a3b8" text-anchor="middle">in: EmbeddingVectorList  →  out: IngestStats</text>
+    <text x="350" y="30" font-family="system-ui,sans-serif" font-size="16" font-weight="bold" fill="#1e293b" text-anchor="middle">search-ingest</text>
+  </svg>
+</body>
+</html>
