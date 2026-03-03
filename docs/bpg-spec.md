@@ -33,6 +33,7 @@
    - 15.1 [Near-Term Delivery Priorities](#151-near-term-delivery-priorities)
 16. [Full Example: Bug Triage Process](#16-full-example-bug-triage-process)
 17. [Operational Packaging & Local Runtime (Implemented)](#17-operational-packaging--local-runtime-implemented)
+18. [Search Pipelines Pattern (Implemented Baseline)](#18-search-pipelines-pattern-implemented-baseline)
 
 ---
 
@@ -195,6 +196,8 @@ Providers are pluggable execution backends responsible for carrying out work on 
 | `queue.kafka` | Messaging | Publishes/consumes Kafka messages |
 | `timer.delay` | Control | Waits a specified duration |
 | `mock` | Testing | Deterministic canned outputs for local/system tests |
+
+Search-oriented providers (`fs.markdown_list`, `text.markdown_chunk`, `embed.text`, `weaviate.upsert`, `weaviate.hybrid_search`) are available as baseline built-ins and specified in §18.
 
 #### Provider Contract
 
@@ -428,6 +431,21 @@ Plan: 1 to add, 2 to change, 0 to destroy.
 ```
 
 No execution occurs during plan. Plan output is deterministic and repeatable.
+
+#### Plan Artifact Inspection
+
+BPG MAY emit a machine-readable plan artifact:
+
+- `bpg plan <process_file> --out plan.out`
+- `bpg show --json plan.out`
+
+The artifact includes:
+
+- Change summary (`added_nodes`, `modified_nodes`, `removed_nodes`, edge deltas, trigger change)
+- IR delta (old/new node and edge counts, topological order)
+- Artifact preview for added/modified/removed nodes
+
+This enables CI and scripting workflows (for example, piping to `jq`).
 
 ---
 
@@ -867,12 +885,12 @@ node_types:
       project_id: string
       default_labels: list<string>?
 
-  dashboard.form@v1:
+  dashboard.form@v2:
     description: "Web form provider."
     in: BugReport
     out: BugReport
     provider: dashboard.form
-    version: v1
+    version: v2
     config_schema:
       title: string
       schema: string
@@ -889,7 +907,7 @@ metadata:
 
 nodes:
   intake_form:
-    type: dashboard.form@v1
+    type: dashboard.form@v2
     description: "Web form for submitting new bug reports."
     config:
       title: "Report a Bug"
@@ -1018,6 +1036,68 @@ The current implementation supports two operational paths:
 
 - `--dashboard` adds a dashboard service in local and package compose outputs.
 - `--dashboard-port` configures host/container port mapping (default `8080`).
+
+---
+
+## 18. Search Pipelines Pattern (Implemented Baseline)
+
+Search systems typically have two operational pipelines:
+
+- ingestion (writes to index/vector stores)
+- retrieval (reads from those stores)
+
+The recommended BPG topology is two separate process graphs, not one merged graph:
+
+- `search-ingest` process for file parsing/chunking/embedding/upsert
+- `search-retrieve` process for query embedding and retrieval
+
+### 18.1 Shared Datastore Contract
+
+To ensure both processes target the same datastore, use a shared import with a typed store identifier and require every datastore node to declare it.
+
+Example:
+
+```yaml
+types:
+  SearchStoreRef:
+    store: enum(search_main)
+```
+
+Node config then pins:
+
+```yaml
+config:
+  store: search_main
+```
+
+Both processes MUST resolve `search_main` to the same runtime endpoint/collection via provider configuration and environment variables.
+
+### 18.2 Built-in Search Nodes
+
+The following node/provider pairs are implemented in the baseline runtime:
+
+- `fs.markdown_list@v1` -> `fs.markdown_list`
+- `text.markdown_chunk@v1` -> `text.markdown_chunk`
+- `embed.text@v1` -> `embed.text`
+- `weaviate.upsert@v1` -> `weaviate.upsert`
+- `weaviate.hybrid_search@v1` -> `weaviate.hybrid_search`
+- optional `weaviate.delete@v1` -> `weaviate.delete`
+
+### 18.3 Weaviate-Specific Intent
+
+The initial search contract targets Weaviate-style hybrid retrieval:
+
+- BM25-like keyword retrieval
+- vector similarity retrieval
+- alpha-weighted fusion in `weaviate.hybrid_search`
+
+### 18.4 Example Artifacts
+
+Reference design graphs are provided under `examples/search/`:
+
+- `search-resources.bpg.yaml` (shared contract)
+- `ingest.bpg.yaml` (ingestion graph)
+- `retrieve.bpg.yaml` (retrieval graph)
 
 ---
 

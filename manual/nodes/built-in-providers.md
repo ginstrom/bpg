@@ -35,6 +35,11 @@ This catalog documents provider IDs currently registered in `PROVIDER_REGISTRY`.
 |---|---|---|---|---|
 | `text.parse_numbers` | Extract numbers from text. | required `text` string. | none | none |
 | `math.sum_numbers` | Sum numeric list. | required `numbers` list of numeric values. | none | none |
+| `fs.markdown_list` | Enumerate markdown files and emit document payloads. | input/config `root_dir`, optional `glob`. | optional `root_dir`, `glob` (default `**/*.md`). | optional: `BPG_MARKDOWN_ROOT` |
+| `text.markdown_chunk` | Split markdown docs into overlapping chunks. | required `documents` list. | optional `chunk_size` and `overlap`. | none |
+| `embed.text` | Deterministic baseline embeddings for chunks/queries. | either `chunks` list or `query` string. | optional embedding model selector. | none |
+| `weaviate.upsert` | Baseline local index writer for search chunks/vectors. | required `items` list. | optional `store`, `store_dir`, `store_path`. | optional: `BPG_SEARCH_STORE_DIR`, `WEAVIATE_URL`, `WEAVIATE_API_KEY` |
+| `weaviate.hybrid_search` | Baseline hybrid lexical+vector retrieval. | required `query`, `vector`; optional `top_k`. | optional `store`, `store_dir`, `store_path`, `alpha`, `top_k`. | optional: `BPG_SEARCH_STORE_DIR`, `WEAVIATE_URL`, `WEAVIATE_API_KEY` |
 | `flow.loop` | Bounded iteration planning helper. | required `items` list. | optional `max_iterations` (int). | none |
 | `flow.fanout` | Convert `items` list to branch envelopes. | required `items` list. | none | none |
 | `flow.await_all` | Aggregate fanout results. | required `results` list. | none | none |
@@ -54,4 +59,4 @@ Dry-run toggles:
 
 ## 6. Built-in Provider IDs (quick list)
 
-`mock`, `http.webhook`, `core.passthrough`, `agent.pipeline`, `dashboard.form`, `slack.interactive`, `http.gitlab`, `queue.kafka`, `timer.delay`, `flow.loop`, `flow.fanout`, `flow.await_all`, `bpg.process_call`, `text.parse_numbers`, `math.sum_numbers`, `tool.web_search`, `notify.email`
+`mock`, `http.webhook`, `core.passthrough`, `agent.pipeline`, `dashboard.form`, `slack.interactive`, `http.gitlab`, `queue.kafka`, `timer.delay`, `flow.loop`, `flow.fanout`, `flow.await_all`, `bpg.process_call`, `text.parse_numbers`, `math.sum_numbers`, `fs.markdown_list`, `text.markdown_chunk`, `embed.text`, `weaviate.upsert`, `weaviate.hybrid_search`, `tool.web_search`, `notify.email`

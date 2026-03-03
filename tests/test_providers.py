@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from typing import Any, Dict
 from unittest.mock import patch
 
@@ -21,10 +22,13 @@ from bpg.providers import (
     AgentPipelineProvider,
     BpgProcessCallProvider,
     DashboardFormProvider,
+    EmbedTextProvider,
     EmailNotifyProvider,
     FlowAwaitAllProvider,
     FlowFanoutProvider,
     FlowLoopProvider,
+    MarkdownChunkProvider,
+    MarkdownListProvider,
     HttpGitlabProvider,
     ParseTextNumbersProvider,
     PROVIDER_REGISTRY,
@@ -33,6 +37,8 @@ from bpg.providers import (
     ProviderError,
     SumNumbersProvider,
     TimerDelayProvider,
+    WeaviateHybridSearchProvider,
+    WeaviateUpsertProvider,
     WebSearchProvider,
     WebhookProvider,
     compute_idempotency_key,
@@ -466,6 +472,11 @@ class TestProviderRegistry:
             "bpg.process_call",
             "text.parse_numbers",
             "math.sum_numbers",
+            "fs.markdown_list",
+            "text.markdown_chunk",
+            "embed.text",
+            "weaviate.upsert",
+            "weaviate.hybrid_search",
             "tool.web_search",
             "notify.email",
         }
@@ -643,6 +654,96 @@ class TestBuiltInProviders:
         out = provider.await_result(handle)
         assert out["dry_run"] is False
         assert out["sent"] is True
+
+    def test_markdown_list_reads_markdown_files(self, tmp_path: Path):
+        provider = MarkdownListProvider()
+        ctx = _ctx(node_name="list")
+        docs_dir = tmp_path / "docs"
+        docs_dir.mkdir()
+        (docs_dir / "a.md").write_text("# Title\n\nAlpha", encoding="utf-8")
+        (docs_dir / "b.txt").write_text("ignore", encoding="utf-8")
+
+        handle = provider.invoke({"root_dir": str(docs_dir), "glob": "*.md"}, {}, ctx)
+        out = provider.await_result(handle)
+        assert len(out["documents"]) == 1
+        assert out["documents"][0]["path"].endswith("a.md")
+        assert "markdown" in out["documents"][0]
+
+    def test_markdown_chunk_splits_documents(self):
+        provider = MarkdownChunkProvider()
+        ctx = _ctx(node_name="chunk")
+        input_payload = {
+            "documents": [
+                {
+                    "source_id": "doc-1",
+                    "path": "a.md",
+                    "markdown": "0123456789",
+                    "metadata": {},
+                }
+            ]
+        }
+        handle = provider.invoke(input_payload, {"chunk_size": 4, "overlap": 1}, ctx)
+        out = provider.await_result(handle)
+        assert len(out["chunks"]) >= 3
+        assert out["chunks"][0]["chunk_id"].startswith("doc-1:")
+
+    def test_embed_text_generates_deterministic_vectors(self):
+        provider = EmbedTextProvider()
+        ctx = _ctx(node_name="embed")
+        handle1 = provider.invoke({"query": "hello world"}, {}, ctx)
+        out1 = provider.await_result(handle1)
+        handle2 = provider.invoke({"query": "hello world"}, {}, ctx)
+        out2 = provider.await_result(handle2)
+        assert out1["query"] == "hello world"
+        assert out1["vector"] == out2["vector"]
+        assert isinstance(out1["vector"], list)
+        assert len(out1["vector"]) > 0
+
+    def test_weaviate_upsert_and_hybrid_search_local_store(self, tmp_path: Path):
+        upsert = WeaviateUpsertProvider()
+        search = WeaviateHybridSearchProvider()
+        upsert_ctx = _ctx(node_name="upsert")
+        search_ctx = _ctx(node_name="search")
+        config = {"store": "search_main", "store_dir": str(tmp_path)}
+
+        upsert_handle = upsert.invoke(
+            {
+                "items": [
+                    {
+                        "source_id": "doc1",
+                        "chunk_id": "doc1:0",
+                        "text": "alpha beta gamma",
+                        "vector": [1.0, 0.0, 0.0],
+                        "metadata": {"path": "doc1.md"},
+                    },
+                    {
+                        "source_id": "doc2",
+                        "chunk_id": "doc2:0",
+                        "text": "delta epsilon",
+                        "vector": [0.0, 1.0, 0.0],
+                        "metadata": {"path": "doc2.md"},
+                    },
+                ]
+            },
+            config,
+            upsert_ctx,
+        )
+        upsert_out = upsert.await_result(upsert_handle)
+        assert upsert_out["inserted"] == 2
+
+        search_handle = search.invoke(
+            {
+                "query": "alpha",
+                "vector": [1.0, 0.0, 0.0],
+                "top_k": 2,
+            },
+            config,
+            search_ctx,
+        )
+        search_out = search.await_result(search_handle)
+        assert search_out["query"] == "alpha"
+        assert len(search_out["hits"]) >= 1
+        assert search_out["hits"][0]["source_id"] == "doc1"
 
 
 # ---------------------------------------------------------------------------

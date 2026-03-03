@@ -1,0 +1,67 @@
+metadata:
+  name: search-retrieve
+  version: 0.1.0
+  description: "Planned query retrieval flow using Weaviate hybrid search."
+
+imports:
+  - ./search-resources.bpg.yaml
+
+node_types:
+  query_trigger@v1:
+    in: QueryIn
+    out: QueryIn
+    provider: dashboard.form
+    version: v1
+    config_schema: {}
+
+  query_embed@v1:
+    in: QueryIn
+    out: QueryEmbedding
+    provider: embed.text
+    version: v1
+    config_schema:
+      model: string?
+
+  weaviate_hybrid_search@v1:
+    in: QueryEmbedding
+    out: SearchResults
+    provider: weaviate.hybrid_search
+    version: v1
+    config_schema:
+      store: enum(search_main)
+      collection: string
+      alpha: number?
+      top_k: number?
+
+nodes:
+  query_input:
+    type: query_trigger@v1
+    config: {}
+
+  embed_query:
+    type: query_embed@v1
+    config:
+      model: text-embedding-3-large
+
+  search:
+    type: weaviate_hybrid_search@v1
+    config:
+      store: search_main
+      collection: docs_chunks
+      alpha: 0.5
+      top_k: 8
+
+trigger: query_input
+
+edges:
+  - from: query_input
+    to: embed_query
+    with:
+      query: trigger.in.query
+      top_k: trigger.in.top_k
+  - from: embed_query
+    to: search
+    with:
+      query: embed_query.out.query
+      vector: embed_query.out.vector
+      top_k: trigger.in.top_k

@@ -6,8 +6,10 @@ self-contained, so processes can run locally without custom integrations.
 
 from __future__ import annotations
 
+import json
 import hashlib
 import os
+from pathlib import Path
 import re
 import smtplib
 import time
@@ -36,6 +38,50 @@ def _is_dry_run(config: Dict[str, Any]) -> bool:
     if mode in {"dry-run", "dry_run"}:
         return True
     return os.getenv("BPG_DRY_RUN", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _search_store_path(config: Dict[str, Any]) -> Path:
+    """Resolve the local JSONL store path used by search providers."""
+    if isinstance(config.get("store_path"), str) and str(config["store_path"]).strip():
+        return Path(str(config["store_path"]))
+    store_dir = str(config.get("store_dir") or os.getenv("BPG_SEARCH_STORE_DIR", ".bpg-state/search"))
+    store_key = str(config.get("store", "search_main"))
+    safe_key = re.sub(r"[^a-zA-Z0-9_.-]", "_", store_key)
+    return Path(store_dir) / f"{safe_key}.jsonl"
+
+
+def _embed_vector(text: str, dims: int = 16) -> list[float]:
+    """Return a deterministic pseudo-embedding for text."""
+    digest = hashlib.sha256(text.encode("utf-8")).digest()
+    values: list[float] = []
+    for idx in range(dims):
+        byte = digest[idx % len(digest)]
+        # Scale to [-1, 1]
+        values.append((float(byte) / 127.5) - 1.0)
+    return values
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    if not a or not b:
+        return 0.0
+    size = min(len(a), len(b))
+    lhs = a[:size]
+    rhs = b[:size]
+    dot = sum(x * y for x, y in zip(lhs, rhs))
+    mag_a = sum(x * x for x in lhs) ** 0.5
+    mag_b = sum(y * y for y in rhs) ** 0.5
+    if mag_a == 0.0 or mag_b == 0.0:
+        return 0.0
+    return dot / (mag_a * mag_b)
+
+
+def _lexical_score(query: str, text: str) -> float:
+    query_terms = [token for token in re.findall(r"[a-zA-Z0-9]+", query.lower()) if token]
+    if not query_terms:
+        return 0.0
+    haystack = text.lower()
+    matched = sum(1 for token in query_terms if token in haystack)
+    return float(matched) / float(len(query_terms))
 
 
 class AgentPipelineProvider(Provider):
@@ -517,6 +563,457 @@ class BpgProcessCallProvider(Provider):
 
     def cancel(self, handle: ExecutionHandle) -> None:
         handle.provider_data["status"] = ExecutionStatus.FAILED
+
+
+class MarkdownListProvider(Provider):
+    """`fs.markdown_list` provider.
+
+    Enumerates markdown files from a root directory and returns document payloads.
+    """
+
+    provider_id = "fs.markdown_list"
+
+    def invoke(
+        self,
+        input: Dict[str, Any],
+        config: Dict[str, Any],
+        context: ExecutionContext,
+    ) -> ExecutionHandle:
+        root_dir_raw = (
+            input.get("root_dir")
+            or config.get("root_dir")
+            or os.getenv("BPG_MARKDOWN_ROOT")
+            or "."
+        )
+        if not isinstance(root_dir_raw, str) or not root_dir_raw.strip():
+            raise ProviderError(
+                code="invalid_input",
+                message="fs.markdown_list requires root_dir as input or config",
+                retryable=False,
+            )
+        root_dir = Path(root_dir_raw).expanduser().resolve()
+        if not root_dir.exists() or not root_dir.is_dir():
+            raise ProviderError(
+                code="invalid_input",
+                message=f"fs.markdown_list root_dir not found: {root_dir}",
+                retryable=False,
+            )
+
+        glob_pattern = input.get("glob") or config.get("glob") or "**/*.md"
+        if not isinstance(glob_pattern, str) or not glob_pattern.strip():
+            raise ProviderError(
+                code="invalid_input",
+                message="fs.markdown_list glob must be a non-empty string",
+                retryable=False,
+            )
+
+        documents: list[dict[str, Any]] = []
+        for path in sorted(root_dir.glob(glob_pattern)):
+            if not path.is_file():
+                continue
+            try:
+                markdown = path.read_text(encoding="utf-8")
+            except Exception as exc:
+                raise ProviderError(
+                    code="read_error",
+                    message=f"failed to read markdown file {path}: {exc}",
+                    retryable=False,
+                )
+            rel_path = str(path.relative_to(root_dir))
+            source_id = hashlib.sha256(rel_path.encode("utf-8")).hexdigest()[:16]
+            documents.append(
+                {
+                    "source_id": source_id,
+                    "path": rel_path,
+                    "markdown": markdown,
+                    "metadata": {
+                        "bytes": path.stat().st_size,
+                    },
+                }
+            )
+
+        output = {"documents": documents}
+        return ExecutionHandle(
+            handle_id=context.idempotency_key,
+            idempotency_key=context.idempotency_key,
+            provider_id=self.provider_id,
+            provider_data={"status": ExecutionStatus.COMPLETED, "output": output},
+        )
+
+    def poll(self, handle: ExecutionHandle) -> ExecutionStatus:
+        return handle.provider_data.get("status", ExecutionStatus.COMPLETED)
+
+    def await_result(self, handle: ExecutionHandle, timeout: Optional[float] = None) -> Dict[str, Any]:
+        _ = timeout
+        return dict(handle.provider_data.get("output", {}))
+
+    def cancel(self, handle: ExecutionHandle) -> None:
+        handle.provider_data["status"] = ExecutionStatus.FAILED
+
+
+class MarkdownChunkProvider(Provider):
+    """`text.markdown_chunk` provider.
+
+    Splits markdown documents into character windows with overlap.
+    """
+
+    provider_id = "text.markdown_chunk"
+
+    def invoke(
+        self,
+        input: Dict[str, Any],
+        config: Dict[str, Any],
+        context: ExecutionContext,
+    ) -> ExecutionHandle:
+        docs = input.get("documents")
+        if not isinstance(docs, list):
+            raise ProviderError(
+                code="invalid_input",
+                message="text.markdown_chunk requires input.documents list",
+                retryable=False,
+            )
+
+        chunk_size_raw = config.get("chunk_size", 1200)
+        overlap_raw = config.get("overlap", 200)
+        try:
+            chunk_size = int(chunk_size_raw)
+            overlap = int(overlap_raw)
+        except (TypeError, ValueError):
+            raise ProviderError(
+                code="invalid_config",
+                message="text.markdown_chunk chunk_size and overlap must be integers",
+                retryable=False,
+            )
+        if chunk_size <= 0:
+            raise ProviderError("invalid_config", "text.markdown_chunk chunk_size must be > 0", False)
+        if overlap < 0 or overlap >= chunk_size:
+            raise ProviderError(
+                "invalid_config",
+                "text.markdown_chunk overlap must be >= 0 and < chunk_size",
+                False,
+            )
+
+        chunks: list[dict[str, Any]] = []
+        stride = max(1, chunk_size - overlap)
+        for doc in docs:
+            if not isinstance(doc, dict):
+                continue
+            source_id = str(doc.get("source_id", ""))
+            path = str(doc.get("path", ""))
+            markdown = doc.get("markdown")
+            if not isinstance(markdown, str):
+                continue
+            metadata = doc.get("metadata")
+            if metadata is not None and not isinstance(metadata, dict):
+                metadata = {}
+            for start in range(0, max(len(markdown), 1), stride):
+                text = markdown[start : start + chunk_size]
+                if not text:
+                    continue
+                ordinal = len(chunks)
+                chunks.append(
+                    {
+                        "source_id": source_id,
+                        "chunk_id": f"{source_id}:{ordinal}",
+                        "text": text,
+                        "path": path,
+                        "ordinal": float(ordinal),
+                        "metadata": metadata or {},
+                    }
+                )
+                if start + chunk_size >= len(markdown):
+                    break
+
+        output = {"chunks": chunks}
+        return ExecutionHandle(
+            handle_id=context.idempotency_key,
+            idempotency_key=context.idempotency_key,
+            provider_id=self.provider_id,
+            provider_data={"status": ExecutionStatus.COMPLETED, "output": output},
+        )
+
+    def poll(self, handle: ExecutionHandle) -> ExecutionStatus:
+        return handle.provider_data.get("status", ExecutionStatus.COMPLETED)
+
+    def await_result(self, handle: ExecutionHandle, timeout: Optional[float] = None) -> Dict[str, Any]:
+        _ = timeout
+        return dict(handle.provider_data.get("output", {}))
+
+    def cancel(self, handle: ExecutionHandle) -> None:
+        handle.provider_data["status"] = ExecutionStatus.FAILED
+
+
+class EmbedTextProvider(Provider):
+    """`embed.text` provider.
+
+    Produces deterministic vectors for chunk payloads or query payloads.
+    """
+
+    provider_id = "embed.text"
+
+    def invoke(
+        self,
+        input: Dict[str, Any],
+        config: Dict[str, Any],
+        context: ExecutionContext,
+    ) -> ExecutionHandle:
+        _ = config
+        if isinstance(input.get("chunks"), list):
+            items: list[dict[str, Any]] = []
+            for chunk in input["chunks"]:
+                if not isinstance(chunk, dict):
+                    continue
+                text = chunk.get("text")
+                if not isinstance(text, str):
+                    continue
+                items.append(
+                    {
+                        "source_id": str(chunk.get("source_id", "")),
+                        "chunk_id": str(chunk.get("chunk_id", "")),
+                        "text": text,
+                        "vector": _embed_vector(text),
+                        "metadata": chunk.get("metadata", {}) if isinstance(chunk.get("metadata"), dict) else {},
+                    }
+                )
+            output = {"items": items}
+        else:
+            query = input.get("query")
+            if not isinstance(query, str) or not query.strip():
+                raise ProviderError(
+                    code="invalid_input",
+                    message="embed.text requires input.query string or input.chunks list",
+                    retryable=False,
+                )
+            output = {
+                "query": query,
+                "vector": _embed_vector(query),
+                "top_k": input.get("top_k"),
+            }
+
+        return ExecutionHandle(
+            handle_id=context.idempotency_key,
+            idempotency_key=context.idempotency_key,
+            provider_id=self.provider_id,
+            provider_data={"status": ExecutionStatus.COMPLETED, "output": output},
+        )
+
+    def poll(self, handle: ExecutionHandle) -> ExecutionStatus:
+        return handle.provider_data.get("status", ExecutionStatus.COMPLETED)
+
+    def await_result(self, handle: ExecutionHandle, timeout: Optional[float] = None) -> Dict[str, Any]:
+        _ = timeout
+        return dict(handle.provider_data.get("output", {}))
+
+    def cancel(self, handle: ExecutionHandle) -> None:
+        handle.provider_data["status"] = ExecutionStatus.FAILED
+
+
+class WeaviateUpsertProvider(Provider):
+    """`weaviate.upsert` provider.
+
+    Local baseline implementation writes records to a shared JSONL store.
+    """
+
+    provider_id = "weaviate.upsert"
+
+    def invoke(
+        self,
+        input: Dict[str, Any],
+        config: Dict[str, Any],
+        context: ExecutionContext,
+    ) -> ExecutionHandle:
+        items = input.get("items")
+        if not isinstance(items, list):
+            raise ProviderError(
+                code="invalid_input",
+                message="weaviate.upsert requires input.items list",
+                retryable=False,
+            )
+
+        store_path = _search_store_path(config)
+        store_path.parent.mkdir(parents=True, exist_ok=True)
+
+        existing: dict[str, dict[str, Any]] = {}
+        if store_path.exists():
+            for line in store_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                chunk_id = record.get("chunk_id")
+                if isinstance(chunk_id, str) and chunk_id:
+                    existing[chunk_id] = record
+
+        inserted = 0
+        updated = 0
+        failed = 0
+        for item in items:
+            if not isinstance(item, dict):
+                failed += 1
+                continue
+            chunk_id = item.get("chunk_id")
+            if not isinstance(chunk_id, str) or not chunk_id:
+                failed += 1
+                continue
+            record = {
+                "source_id": str(item.get("source_id", "")),
+                "chunk_id": chunk_id,
+                "text": str(item.get("text", "")),
+                "vector": item.get("vector", []),
+                "metadata": item.get("metadata", {}) if isinstance(item.get("metadata"), dict) else {},
+            }
+            if chunk_id in existing:
+                updated += 1
+            else:
+                inserted += 1
+            existing[chunk_id] = record
+
+        with store_path.open("w", encoding="utf-8") as f:
+            for record in existing.values():
+                f.write(json.dumps(record, sort_keys=True) + "\n")
+
+        output = {"inserted": inserted, "updated": updated, "failed": failed}
+        return ExecutionHandle(
+            handle_id=context.idempotency_key,
+            idempotency_key=context.idempotency_key,
+            provider_id=self.provider_id,
+            provider_data={"status": ExecutionStatus.COMPLETED, "output": output},
+        )
+
+    def poll(self, handle: ExecutionHandle) -> ExecutionStatus:
+        return handle.provider_data.get("status", ExecutionStatus.COMPLETED)
+
+    def await_result(self, handle: ExecutionHandle, timeout: Optional[float] = None) -> Dict[str, Any]:
+        _ = timeout
+        return dict(handle.provider_data.get("output", {}))
+
+    def cancel(self, handle: ExecutionHandle) -> None:
+        handle.provider_data["status"] = ExecutionStatus.FAILED
+
+    def packaging_requirements(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        _ = config
+        return {
+            "services": [],
+            "required_env": [],
+            "optional_env": ["BPG_SEARCH_STORE_DIR", "WEAVIATE_URL", "WEAVIATE_API_KEY"],
+        }
+
+
+class WeaviateHybridSearchProvider(Provider):
+    """`weaviate.hybrid_search` provider.
+
+    Local baseline implementation performs hybrid lexical+vector search over
+    records produced by :class:`WeaviateUpsertProvider`.
+    """
+
+    provider_id = "weaviate.hybrid_search"
+
+    def invoke(
+        self,
+        input: Dict[str, Any],
+        config: Dict[str, Any],
+        context: ExecutionContext,
+    ) -> ExecutionHandle:
+        query = input.get("query")
+        if not isinstance(query, str) or not query.strip():
+            raise ProviderError(
+                code="invalid_input",
+                message="weaviate.hybrid_search requires input.query string",
+                retryable=False,
+            )
+        query_vec = input.get("vector")
+        if not isinstance(query_vec, list):
+            raise ProviderError(
+                code="invalid_input",
+                message="weaviate.hybrid_search requires input.vector list<number>",
+                retryable=False,
+            )
+
+        top_k_raw = input.get("top_k")
+        if top_k_raw is None:
+            top_k_raw = config.get("top_k", 8)
+        alpha_raw = config.get("alpha")
+        if alpha_raw is None:
+            alpha_raw = 0.5
+        try:
+            top_k = max(1, int(top_k_raw))
+            alpha = float(alpha_raw)
+        except (TypeError, ValueError):
+            raise ProviderError(
+                code="invalid_config",
+                message="weaviate.hybrid_search top_k/alpha must be numeric",
+                retryable=False,
+            )
+        alpha = min(1.0, max(0.0, alpha))
+
+        store_path = _search_store_path(config)
+        records: list[dict[str, Any]] = []
+        if store_path.exists():
+            for line in store_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(record, dict):
+                    records.append(record)
+
+        scored: list[tuple[float, dict[str, Any]]] = []
+        for record in records:
+            text = str(record.get("text", ""))
+            lexical = _lexical_score(query, text)
+            vec = record.get("vector")
+            if isinstance(vec, list):
+                vector_score = _cosine_similarity(
+                    [float(v) for v in query_vec if isinstance(v, (int, float))],
+                    [float(v) for v in vec if isinstance(v, (int, float))],
+                )
+            else:
+                vector_score = 0.0
+            hybrid = ((1.0 - alpha) * lexical) + (alpha * vector_score)
+            scored.append((hybrid, record))
+
+        scored.sort(key=lambda item: item[0], reverse=True)
+        hits: list[dict[str, Any]] = []
+        for score, record in scored[:top_k]:
+            hits.append(
+                {
+                    "source_id": str(record.get("source_id", "")),
+                    "chunk_id": str(record.get("chunk_id", "")),
+                    "text": str(record.get("text", "")),
+                    "score": float(score),
+                    "metadata": record.get("metadata", {}) if isinstance(record.get("metadata"), dict) else {},
+                }
+            )
+
+        output = {"query": query, "hits": hits}
+        return ExecutionHandle(
+            handle_id=context.idempotency_key,
+            idempotency_key=context.idempotency_key,
+            provider_id=self.provider_id,
+            provider_data={"status": ExecutionStatus.COMPLETED, "output": output},
+        )
+
+    def poll(self, handle: ExecutionHandle) -> ExecutionStatus:
+        return handle.provider_data.get("status", ExecutionStatus.COMPLETED)
+
+    def await_result(self, handle: ExecutionHandle, timeout: Optional[float] = None) -> Dict[str, Any]:
+        _ = timeout
+        return dict(handle.provider_data.get("output", {}))
+
+    def cancel(self, handle: ExecutionHandle) -> None:
+        handle.provider_data["status"] = ExecutionStatus.FAILED
+
+    def packaging_requirements(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        _ = config
+        return {
+            "services": [],
+            "required_env": [],
+            "optional_env": ["BPG_SEARCH_STORE_DIR", "WEAVIATE_URL", "WEAVIATE_API_KEY"],
+        }
 
 
 class ParseTextNumbersProvider(Provider):

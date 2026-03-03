@@ -7,6 +7,7 @@ This section is the source of truth for node authoring and built-in node behavio
 - [Node Authoring Spec](node-authoring-spec.md)
 - [Built-in Provider Catalog](built-in-providers.md)
 - [Custom Provider Development](custom-provider-development.md)
+- [Search Pattern (Ingestion + Retrieval)](search-pattern.md)
 - [Node Examples](examples.md)
 
 ## Scope

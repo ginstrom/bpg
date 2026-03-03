@@ -1,0 +1,62 @@
+types:
+  SearchStoreKey:
+    value: enum(search_main)
+
+  MarkdownIngestTrigger:
+    root_dir: string
+    glob: string?
+
+  MarkdownDocument:
+    source_id: string
+    path: string
+    markdown: string
+    metadata: object?
+
+  MarkdownDocumentList:
+    documents: list<MarkdownDocument>
+
+  MarkdownChunk:
+    source_id: string
+    chunk_id: string
+    text: string
+    path: string
+    ordinal: number
+    metadata: object?
+
+  MarkdownChunkList:
+    chunks: list<MarkdownChunk>
+
+  EmbeddingVector:
+    source_id: string
+    chunk_id: string?
+    text: string
+    vector: list<number>
+    metadata: object?
+
+  EmbeddingVectorList:
+    items: list<EmbeddingVector>
+
+  IngestStats:
+    inserted: number
+    updated: number
+    failed: number
+
+  QueryIn:
+    query: string
+    top_k: number?
+
+  QueryEmbedding:
+    query: string
+    vector: list<number>
+    top_k: number?
+
+  SearchHit:
+    source_id: string
+    chunk_id: string
+    text: string
+    score: number
+    metadata: object?
+
+  SearchResults:
+    query: string
+    hits: list<SearchHit>
