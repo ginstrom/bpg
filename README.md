@@ -124,9 +124,10 @@ See [LICENSE](LICENSE), [LICENSE-APACHE](LICENSE-APACHE), and [NOTICE](NOTICE).
   - [Prompt Patterns](docs/ai/prompt_patterns.md)
   - [Repair Strategies](docs/ai/repair_strategies.md)
 
-## Search Example
+## Runnable Examples
 
-Runnable ingestion/retrieval graphs are in [examples/search/README.md](examples/search/README.md).
+- Search ingestion/retrieval graphs: [examples/search/README.md](examples/search/README.md)
+- Wrapper-focused examples: [examples/wrappers/README.md](examples/wrappers/README.md)
 
 ## Local Development
 
