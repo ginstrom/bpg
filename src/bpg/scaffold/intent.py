@@ -4,11 +4,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from bpg.scaffold.templates import build_base_process
+from bpg.scaffold.templates import build_base_process, slugify
 
 
-def scaffold_from_intent(intent: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    process = build_base_process(intent)
+def scaffold_process(
+    *,
+    name: str | None,
+    description: str | None,
+    with_review: bool = False,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    process_name = slugify(name or "generated-process")[:48]
+    process = build_base_process(name=process_name, description=description)
     todos: list[dict[str, Any]] = [
         {
             "id": "T_PROVIDER_SELECT",
@@ -22,8 +28,7 @@ def scaffold_from_intent(intent: str) -> tuple[dict[str, Any], dict[str, Any]]:
         },
     ]
 
-    lowered = intent.lower()
-    if "review" in lowered or "approve" in lowered:
+    if with_review:
         process["types"]["ReviewOut"] = {"approved": "bool", "result": "string"}
         process["node_types"]["review_step@v1"] = {
             "in": "TaskOutput",

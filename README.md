@@ -60,7 +60,7 @@ bpg --help
 ## Quickstart Commands
 
 ```bash
-uv run bpg init --from-intent "review incoming support requests" --output process.bpg.yaml --todos-out todos.json
+uv run bpg init --name review-incoming-support-requests --with-review --output process.bpg.yaml --todos-out todos.json
 uv run bpg doctor process.bpg.yaml --json
 uv run bpg plan process.bpg.yaml --json --explain
 uv run bpg apply process.bpg.yaml --auto-approve

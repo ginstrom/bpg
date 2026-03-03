@@ -11,13 +11,12 @@ def slugify(value: str) -> str:
     return slug or "generated-process"
 
 
-def build_base_process(intent: str) -> dict[str, Any]:
-    name = slugify(intent)[:48]
+def build_base_process(*, name: str, description: str | None = None) -> dict[str, Any]:
     return {
         "metadata": {
             "name": name,
             "version": "0.1.0",
-            "description": f"Scaffold generated from intent: {intent}",
+            "description": description or f"Scaffold generated for process: {name}",
         },
         "types": {
             "IntentInput": {"request": "string"},

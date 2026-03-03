@@ -45,7 +45,7 @@ from bpg.compiler.formatter import format_process_file
 from bpg.compiler.patching import PatchApplyError, apply_json_patch, load_patch_file
 from bpg.compiler.normalize import normalize_process_dict
 from bpg.testing.runner import run_spec_test_suite
-from bpg.scaffold.intent import scaffold_from_intent
+from bpg.scaffold.intent import scaffold_process
 from bpg.packaging import (
     build_runtime_spec,
 )
@@ -874,10 +874,25 @@ def run_spec_tests(
 
 @app.command()
 def init(
-    from_intent: str = typer.Option(
-        ...,
-        "--from-intent",
-        help="Natural-language intent used to generate a process scaffold.",
+    name: str = typer.Option(
+        "generated-process",
+        "--name",
+        help="Process metadata.name for the generated scaffold.",
+    ),
+    description: str | None = typer.Option(
+        None,
+        "--description",
+        help="Optional process metadata.description.",
+    ),
+    with_review: bool = typer.Option(
+        False,
+        "--with-review",
+        help="Include a human review node and edge in the scaffold.",
+    ),
+    with_hitl: bool = typer.Option(
+        False,
+        "--with-hitl",
+        help="Alias for --with-review.",
     ),
     output: Path = typer.Option(
         Path("process.bpg.yaml"),
@@ -896,8 +911,12 @@ def init(
         help="Emit scaffold and TODO payload as JSON to stdout.",
     ),
 ) -> None:
-    """Generate a process scaffold from intent text."""
-    process_doc, todos = scaffold_from_intent(from_intent)
+    """Generate a process scaffold with explicit options."""
+    process_doc, todos = scaffold_process(
+        name=name,
+        description=description,
+        with_review=(with_review or with_hitl),
+    )
     canonical = normalize_process_dict(process_doc)
 
     if json_output:

@@ -16,8 +16,9 @@ def test_init_from_intent_writes_process_and_todos(tmp_path: Path):
         app,
         [
             "init",
-            "--from-intent",
-            "review customer onboarding requests",
+            "--name",
+            "customer-onboarding",
+            "--with-hitl",
             "--output",
             str(process_file),
             "--todos-out",
@@ -28,6 +29,7 @@ def test_init_from_intent_writes_process_and_todos(tmp_path: Path):
     assert process_file.exists()
     assert todos_file.exists()
     text = process_file.read_text()
+    assert "customer-onboarding" in text
     assert "review_step@v1" in text
     todos = json.loads(todos_file.read_text())
     assert "todos" in todos
@@ -39,8 +41,7 @@ def test_init_from_intent_json_output(tmp_path: Path):
         app,
         [
             "init",
-            "--from-intent",
-            "extract customer ids",
+            "--with-review",
             "--json",
         ],
     )
@@ -49,3 +50,4 @@ def test_init_from_intent_json_output(tmp_path: Path):
     assert "process" in payload
     assert "todos" in payload
     assert payload["process"]["trigger"] == "input"
+    assert "review" in payload["process"]["nodes"]

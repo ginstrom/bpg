@@ -7,7 +7,7 @@ import yaml
 
 from bpg.compiler.normalize import normalize_process_dict
 from bpg.compiler.patching import apply_json_patch
-from bpg.scaffold.intent import scaffold_from_intent
+from bpg.scaffold.intent import scaffold_process
 
 
 def _render(doc: dict) -> str:
@@ -25,7 +25,7 @@ def _changed_lines(before: str, after: str) -> int:
 
 
 def test_insert_review_step_keeps_diff_small():
-    base_doc, _ = scaffold_from_intent("extract customer ids")
+    base_doc, _ = scaffold_process(name="extract-customer-ids", description=None, with_review=False)
     before = _render(base_doc)
 
     patch = [

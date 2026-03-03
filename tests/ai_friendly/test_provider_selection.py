@@ -1,23 +1,23 @@
 from __future__ import annotations
 
-from pathlib import Path
-
-import yaml
-
-from bpg.scaffold.intent import scaffold_from_intent
+from bpg.scaffold.intent import scaffold_process
 
 
-def test_provider_selection_accuracy_from_intent_corpus():
-    corpus_path = Path(__file__).parent / "corpus" / "provider_selection.yaml"
-    corpus = yaml.safe_load(corpus_path.read_text())
+def test_provider_selection_accuracy_from_explicit_scaffold_flags():
+    cases = [
+        {"with_review": True, "expect_review_step": True},
+        {"with_review": False, "expect_review_step": False},
+    ]
     correct = 0
-    total = 0
-    for case in corpus["cases"]:
-        total += 1
-        process_doc, _ = scaffold_from_intent(case["intent"])
+    for idx, case in enumerate(cases):
+        process_doc, _ = scaffold_process(
+            name=f"case-{idx}",
+            description=None,
+            with_review=case["with_review"],
+        )
         has_review = "review_step@v1" in process_doc["node_types"]
-        if has_review == bool(case["expect_review_step"]):
+        if has_review == case["expect_review_step"]:
             correct += 1
 
-    accuracy = correct / total
+    accuracy = correct / len(cases)
     assert accuracy >= 1.0

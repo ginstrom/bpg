@@ -115,8 +115,8 @@ def test_e2e_tooling_init_and_provider_introspection(tmp_path: Path) -> None:
         app,
         [
             "init",
-            "--from-intent",
-            "extract customer ids",
+            "--name",
+            "extract-customer-ids",
             "--output",
             str(process_file),
             "--todos-out",

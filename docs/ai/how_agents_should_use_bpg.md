@@ -15,7 +15,7 @@ Use this for autonomous or human-in-the-loop agent workflows that author process
 
 ## Core idea
 Preferred loop:
-1. Generate skeleton from intent.
+1. Generate skeleton with explicit scaffold options.
 2. Validate with `doctor`.
 3. Apply targeted fixes.
 4. Re-validate and format.
@@ -23,7 +23,7 @@ Preferred loop:
 
 ## Example
 ```bash
-uv run bpg init --from-intent "triage claims" --output process.bpg.yaml
+uv run bpg init --name triage-claims --with-review --output process.bpg.yaml
 uv run bpg doctor process.bpg.yaml --json
 uv run bpg suggest-fix process.bpg.yaml --json
 uv run bpg plan process.bpg.yaml --json --explain

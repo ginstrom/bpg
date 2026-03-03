@@ -8,7 +8,7 @@ doc_metadata:
 ```
 
 ## Summary
-This quickstart walks through the core loop: scaffold from intent, validate, plan/apply, run, and inspect replay state.
+This quickstart walks through the core loop: scaffold with explicit options, validate, plan/apply, run, and inspect replay state.
 
 ## When to use
 Use this when you are starting a new process or testing BPG’s AI-first development workflow.
@@ -20,7 +20,7 @@ generate -> validate -> repair -> deploy -> run -> replay.
 
 ## Example
 ```bash
-uv run bpg init --from-intent "triage incoming support requests" --output process.bpg.yaml --todos-out todos.json
+uv run bpg init --name triage-incoming-support-requests --with-hitl --output process.bpg.yaml --todos-out todos.json
 uv run bpg doctor process.bpg.yaml --json
 uv run bpg suggest-fix process.bpg.yaml --json
 uv run bpg fmt process.bpg.yaml --check

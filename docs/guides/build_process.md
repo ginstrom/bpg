@@ -4,7 +4,7 @@
 doc_metadata:
   topic: build_process
   version: 1
-  summary: Step-by-step guide to build a process graph from intent.
+  summary: Step-by-step guide to build a process graph from scaffold options.
 ```
 
 ## Summary
@@ -18,7 +18,7 @@ Start constrained and explicit. Let compiler feedback drive correctness.
 
 ## Example
 ```bash
-uv run bpg init --from-intent "process invoices with review" --output process.bpg.yaml --todos-out todos.json
+uv run bpg init --name process-invoices --with-review --output process.bpg.yaml --todos-out todos.json
 uv run bpg doctor process.bpg.yaml --json
 uv run bpg plan process.bpg.yaml --json --explain
 uv run bpg apply process.bpg.yaml --auto-approve
@@ -26,7 +26,7 @@ uv run bpg apply process.bpg.yaml --auto-approve
 
 ## Common mistakes
 - Writing a large spec before first validation.
-- Skipping TODO completion from `init --from-intent` output.
+- Skipping TODO completion from `init` scaffold output.
 
 ## Related pages
 - [Quickstart](../quickstart.md)
