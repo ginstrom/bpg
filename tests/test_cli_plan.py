@@ -247,5 +247,5 @@ edges: []
     assert result.exit_code == 1
     payload = json.loads(result.stdout)
     assert "errors" in payload
-    assert payload["errors"][0]["error_code"] == "E_VALIDATION"
+    assert payload["errors"][0]["error_code"] == "E_TYPES_REQUIRED"
     assert payload["errors"][0]["path"] == "$.types"

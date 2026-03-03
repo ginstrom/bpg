@@ -168,7 +168,7 @@ def test_validate_requires_non_empty_types_section():
     with pytest.raises(ValidationError, match="at least one type definition") as excinfo:
         validate_process(process)
     diag = excinfo.value.diagnostic.to_dict()
-    assert diag["error_code"] == "E_VALIDATION"
+    assert diag["error_code"] == "E_TYPES_REQUIRED"
     assert diag["path"] == "$.types"
     assert "at least one type definition" in diag["message"]
 

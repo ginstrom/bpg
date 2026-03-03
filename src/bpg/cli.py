@@ -42,6 +42,8 @@ from bpg.compiler.ir import compile_process
 from bpg.compiler.planner import ImmutabilityError, Plan
 from bpg.compiler.errors import CompilerDiagnostic
 from bpg.compiler.formatter import format_process_file
+from bpg.compiler.patching import PatchApplyError, apply_json_patch, load_patch_file
+from bpg.compiler.normalize import normalize_process_dict
 from bpg.packaging import (
     build_runtime_spec,
 )
@@ -363,6 +365,20 @@ def _diagnostic_for_exception(exc: Exception) -> dict:
     }
 
 
+def _collect_diagnostics(process_file: Path, providers_file: Path | None) -> list[dict]:
+    diagnostics: list[dict] = []
+    try:
+        _load_declared_providers_or_exit(providers_file)
+        process = parse_process_file(process_file)
+        validate_process(process)
+        _ = compile_process(process)
+    except (ParseError, ValidationError, ImmutabilityError) as e:
+        diagnostics.append(_diagnostic_for_exception(e))
+    except Exception as e:
+        diagnostics.append(_diagnostic_for_exception(e))
+    return diagnostics
+
+
 def _looks_like_import_registry_file(process_file: Path) -> bool:
     """Return True when file appears to be an import/registry file, not a process graph."""
     try:
@@ -594,16 +610,7 @@ def doctor(
     ),
 ) -> None:
     """Validate a process and print actionable diagnostics for agents."""
-    diagnostics: list[dict] = []
-    try:
-        _load_declared_providers_or_exit(providers_file)
-        process = parse_process_file(process_file)
-        validate_process(process)
-        _ = compile_process(process)
-    except (ParseError, ValidationError, ImmutabilityError) as e:
-        diagnostics.append(_diagnostic_for_exception(e))
-    except Exception as e:
-        diagnostics.append(_diagnostic_for_exception(e))
+    diagnostics = _collect_diagnostics(process_file, providers_file)
 
     if json_output:
         console.print_json(json.dumps({"ok": not diagnostics, "errors": diagnostics}, sort_keys=True))
@@ -619,6 +626,85 @@ def doctor(
             console.print("[bold green]✓[/bold green] No diagnostics found.")
 
     raise typer.Exit(code=1 if diagnostics else 0)
+
+
+@app.command("apply-patch")
+def apply_patch_cmd(
+    process_file: Path = typer.Argument(..., help="Path to process YAML.", exists=True),
+    patch_file: Path = typer.Argument(..., help="Path to JSON patch file.", exists=True),
+    in_place: bool = typer.Option(
+        True,
+        "--in-place/--no-in-place",
+        help="Write patched spec back to process file.",
+    ),
+) -> None:
+    """Apply JSON patch operations to a process spec."""
+    try:
+        raw = load_yaml_file(process_file)
+        operations = load_patch_file(patch_file)
+        patched = apply_json_patch(raw, operations)
+        canonical = normalize_process_dict(patched)
+        rendered = yaml.safe_dump(canonical, sort_keys=False).rstrip() + "\n"
+    except (ParseError, PatchApplyError) as e:
+        err_console.print(f"Error: {e}")
+        raise typer.Exit(code=1)
+
+    if in_place:
+        process_file.write_text(rendered)
+        console.print(f"[bold green]✓[/bold green] Patch applied: [cyan]{process_file}[/cyan]")
+        return
+    console.print(rendered, end="")
+
+
+@app.command("suggest-fix")
+def suggest_fix(
+    process_file: Path = typer.Argument(..., help="Path to process YAML.", exists=True),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable suggestions."),
+    providers_file: Path | None = typer.Option(
+        None,
+        "--providers-file",
+        help=_PROVIDERS_FILE_HELP,
+        exists=False,
+    ),
+) -> None:
+    """Suggest patch-based repairs from diagnostics."""
+    diagnostics = _collect_diagnostics(process_file, providers_file)
+    suggestions: list[dict] = []
+    for diag in diagnostics:
+        patch = diag.get("example_patch") or []
+        if patch:
+            suggestions.append(
+                {
+                    "error_code": diag.get("error_code"),
+                    "path": diag.get("path"),
+                    "patch": patch,
+                }
+            )
+
+    if json_output:
+        console.print_json(
+            json.dumps(
+                {
+                    "ok": not diagnostics,
+                    "errors": diagnostics,
+                    "suggestions": suggestions,
+                },
+                sort_keys=True,
+            )
+        )
+    else:
+        if suggestions:
+            for item in suggestions:
+                console.print(
+                    f"{item['error_code']} {item['path']}: {json.dumps(item['patch'], sort_keys=True)}"
+                )
+        elif diagnostics:
+            err_console.print("No patch suggestions available for current diagnostics.")
+        else:
+            console.print("[bold green]✓[/bold green] No diagnostics found.")
+
+    if diagnostics and not suggestions:
+        raise typer.Exit(code=1)
 
 
 @app.command()

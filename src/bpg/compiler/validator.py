@@ -122,6 +122,16 @@ def validate_process(process: Process) -> None:
         raise ValidationError(
             "Process must declare at least one type definition",
             field="types",
+            code="E_TYPES_REQUIRED",
+            fix="Add a non-empty `types` section with at least one named type definition.",
+            example_patch=[
+                {
+                    "op": "add",
+                    "path": "$.types",
+                    "value": {"RequiredType": {"ok": "bool"}},
+                }
+            ],
+            schema_excerpt={"types": {"<TypeName>": {"field_name": "string"}}},
         )
 
     # Step 1: Resolve all type references
