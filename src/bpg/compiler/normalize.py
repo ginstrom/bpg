@@ -10,7 +10,7 @@ from bpg.models.schema import Process
 
 def _sort_mapping(value: Any) -> Any:
     if isinstance(value, dict):
-        return {k: _sort_mapping(value[k]) for k in sorted(value)}
+        return {k: _sort_mapping(value[k]) for k in sorted(value, key=lambda item: str(item))}
     if isinstance(value, list):
         return [_sort_mapping(item) for item in value]
     return value
