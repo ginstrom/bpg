@@ -15,26 +15,80 @@ BPG validates the architecture and executes it with consistent runtime semantics
 ## 30-Second Example
 
 ```yaml
-process: document_pipeline
+metadata:
+  name: readme-quickstart
+  version: 1.0.0
+  description: "Parse numbers from text and compute their sum."
+
+types:
+  TextIn:
+    text: string
+  NumbersOut:
+    numbers: list<number>
+  SumOut:
+    sum: number
+    count: number
+
+node_types:
+  ingest@v1:
+    in: TextIn
+    out: TextIn
+    provider: core.passthrough
+    version: v1
+    config_schema: {}
+  parse_numbers@v1:
+    in: TextIn
+    out: NumbersOut
+    provider: text.parse_numbers
+    version: v1
+    config_schema: {}
+  sum_numbers@v1:
+    in: NumbersOut
+    out: SumOut
+    provider: math.sum_numbers
+    version: v1
+    config_schema: {}
 
 nodes:
-  classify:
-    provider: ai.classify_document
+  ingest:
+    type: ingest@v1
+    config: {}
+  parse:
+    type: parse_numbers@v1
+    config: {}
+  sum:
+    type: sum_numbers@v1
+    config: {}
 
-  extract:
-    provider: ai.extract_fields
-
-  review:
-    provider: human.review_form
-    timeout: 24h
+trigger: ingest
 
 edges:
-  - from: classify
-    to: extract
+  - from: ingest
+    to: parse
+    with:
+      text: ingest.out.text
+  - from: parse
+    to: sum
+    with:
+      numbers: parse.out.numbers
 
-  - from: extract
-    to: review
-    when: extract.confidence < 0.8
+output: sum.out
+```
+
+Run it:
+
+```bash
+cat > process.bpg.yaml <<'YAML'
+# paste the YAML above
+YAML
+
+cat > input.yaml <<'YAML'
+text: "Invoice totals are 12, 8, and 5"
+YAML
+
+uv run bpg doctor process.bpg.yaml
+uv run bpg apply process.bpg.yaml --auto-approve
+uv run bpg run readme-quickstart --input input.yaml --engine local
 ```
 
 ## Key Capabilities
