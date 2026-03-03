@@ -21,6 +21,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
+from bpg.compiler.normalize import normalize_process
 from bpg.compiler.types import FieldType, parse_field_type
 from bpg.compiler.validator import (
     ResolvedNode,
@@ -79,6 +80,45 @@ class ExecutionIR:
             return self.resolved_nodes[name]
         # If it was inlined, return the entrance node
         return self.resolved_nodes[f"{name}____in__"]
+
+
+@dataclass(frozen=True)
+class TypeRefIR:
+    """Canonical type reference for node IO fields."""
+
+    name: str
+
+
+@dataclass(frozen=True)
+class NodeSpecIR:
+    """Canonical node specification for machine-operable process planning."""
+
+    node_id: str
+    node_type: str
+    provider: str
+    input_type: TypeRefIR
+    output_type: TypeRefIR
+
+
+@dataclass(frozen=True)
+class EdgeSpecIR:
+    """Canonical edge specification with explicit source/target mapping."""
+
+    edge_id: str
+    source: str
+    target: str
+    when: str | None
+    mapping: Dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ProcessSpecIR:
+    """Canonical process spec representation derived from normalized Process."""
+
+    process_name: str
+    trigger: str
+    nodes: tuple[NodeSpecIR, ...]
+    edges: tuple[EdgeSpecIR, ...]
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +188,8 @@ def compile_process(process: Process) -> ExecutionIR:
     This function assumes :func:`~bpg.compiler.validator.validate_process` has
     already been called successfully.
     """
+    process = normalize_process(process)
+
     # Step 1: Build type registry
     type_registry: Dict[str, ResolvedTypeDef] = {}
     for type_name, typedef in process.types.items():
@@ -381,4 +423,43 @@ def compile_process(process: Process) -> ExecutionIR:
         resolved_nodes=final_nodes,
         resolved_edges=final_edges,
         topological_order=topological_order,
+    )
+
+
+def build_process_spec_ir(process: Process) -> ProcessSpecIR:
+    """Build canonical process spec IR from normalized process + node types."""
+    normalized = normalize_process(process)
+    nodes: list[NodeSpecIR] = []
+    for node_id in sorted(normalized.nodes):
+        node_inst = normalized.nodes[node_id]
+        if node_inst.node_type not in normalized.node_types:
+            continue
+        node_type = normalized.node_types[node_inst.node_type]
+        nodes.append(
+            NodeSpecIR(
+                node_id=node_id,
+                node_type=node_inst.node_type,
+                provider=node_type.provider,
+                input_type=TypeRefIR(name=node_type.input_type),
+                output_type=TypeRefIR(name=node_type.output_type),
+            )
+        )
+
+    edges: list[EdgeSpecIR] = []
+    for idx, edge in enumerate(normalized.edges):
+        edges.append(
+            EdgeSpecIR(
+                edge_id=f"edge_{idx}",
+                source=edge.source,
+                target=edge.target,
+                when=edge.when,
+                mapping=dict(edge.mapping or {}),
+            )
+        )
+    process_name = normalized.metadata.name if normalized.metadata else "default"
+    return ProcessSpecIR(
+        process_name=process_name,
+        trigger=normalized.trigger,
+        nodes=tuple(nodes),
+        edges=tuple(edges),
     )

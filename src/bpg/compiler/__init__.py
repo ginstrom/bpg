@@ -13,15 +13,21 @@ Compilation pipeline (§5):
 """
 
 from bpg.compiler.ir import (
+    EdgeSpecIR,
     ExecutionIR,
     FieldType,
+    NodeSpecIR,
+    ProcessSpecIR,
     ResolvedEdge,
     ResolvedNode,
     ResolvedTypeDef,
+    TypeRefIR,
+    build_process_spec_ir,
     compile_process,
     parse_field_type,
     resolve_typedef,
 )
+from bpg.compiler.normalize import normalize_process
 from bpg.compiler.parser import ParseError, parse_process_file
 from bpg.compiler.validator import ValidationError, validate_process
 
@@ -31,11 +37,17 @@ __all__ = [
     "parse_process_file",
     "validate_process",
     "ExecutionIR",
+    "ProcessSpecIR",
+    "NodeSpecIR",
+    "EdgeSpecIR",
+    "TypeRefIR",
     "FieldType",
     "ResolvedEdge",
     "ResolvedNode",
     "ResolvedTypeDef",
     "compile_process",
+    "build_process_spec_ir",
+    "normalize_process",
     "parse_field_type",
     "resolve_typedef",
 ]
