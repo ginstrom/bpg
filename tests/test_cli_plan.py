@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -76,6 +77,84 @@ edges: []
     assert result.exit_code == 0
     assert "Run bpg apply" in result.stdout
     assert not (state_dir / "runs").exists()
+
+
+def test_plan_writes_json_artifact_and_show_json_reads_it(tmp_path: Path):
+    process_file = tmp_path / "process.bpg.yaml"
+    process_file.write_text(
+        """
+metadata:
+  name: plan-show-proc
+  version: 1.0.0
+types:
+  RequiredType:
+    ok: bool
+node_types:
+  ntype@v1:
+    in: object
+    out: object
+    provider: mock
+    version: v1
+    config_schema: {}
+nodes:
+  n1:
+    type: ntype@v1
+    config: {}
+trigger: n1
+edges: []
+"""
+    )
+    state_dir = tmp_path / "state"
+    out_file = tmp_path / "plan.out"
+
+    plan_result = runner.invoke(
+        app,
+        [
+            "plan",
+            str(process_file),
+            "--state-dir",
+            str(state_dir),
+            "--out",
+            str(out_file),
+        ],
+    )
+    assert plan_result.exit_code == 0
+    assert out_file.exists()
+
+    artifact = json.loads(out_file.read_text())
+    assert artifact["format_version"] == 1
+    assert artifact["process_name"] == "plan-show-proc"
+    assert artifact["has_changes"] is True
+
+    show_result = runner.invoke(app, ["show", "--json", str(out_file)])
+    assert show_result.exit_code == 0
+    shown = json.loads(show_result.stdout)
+    assert shown["process_name"] == "plan-show-proc"
+
+
+def test_show_human_summary(tmp_path: Path):
+    plan_file = tmp_path / "plan.out"
+    plan_file.write_text(
+        json.dumps(
+            {
+                "format_version": 1,
+                "generated_at": "2026-03-02T00:00:00+00:00",
+                "process_name": "demo",
+                "has_changes": True,
+                "changes": {
+                    "added_nodes": ["a"],
+                    "modified_nodes": [],
+                    "removed_nodes": [],
+                    "added_edges": [],
+                    "removed_edges": [],
+                },
+            }
+        )
+    )
+    result = runner.invoke(app, ["show", str(plan_file)])
+    assert result.exit_code == 0
+    assert "Process:" in result.stdout
+    assert "demo" in result.stdout
 
 
 def test_status_shows_failure_details_and_attempts(tmp_path: Path):

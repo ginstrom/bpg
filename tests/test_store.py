@@ -1,6 +1,7 @@
 import time
 import pytest
 from pathlib import Path
+import yaml
 from bpg.models.schema import Process, ProcessMetadata, NodeInstance, NodeType, TypeDef
 from bpg.state.store import StateStore
 from bpg.compiler.ir import compile_process
@@ -35,6 +36,37 @@ def test_store_save_load(tmp_path: Path):
 def test_store_load_missing(tmp_path: Path):
     store = StateStore(tmp_path)
     assert store.load_process("nope") is None
+
+
+def test_store_load_process_backfills_legacy_node_type_version(tmp_path: Path):
+    store = StateStore(tmp_path)
+    processes_dir = tmp_path / "processes"
+    processes_dir.mkdir(parents=True, exist_ok=True)
+
+    legacy_record = {
+        "hash": "dummy",
+        "version": 1,
+        "definition": {
+            "metadata": {"name": "legacy-proc", "version": "1.0.0"},
+            "types": {"T": {"value": "string"}},
+            "node_types": {
+                "legacy_node@v1": {
+                    "in": "T",
+                    "out": "T",
+                    "provider": "mock",
+                    "config_schema": {},
+                }
+            },
+            "nodes": {"n1": {"type": "legacy_node@v1", "config": {}}},
+            "trigger": "n1",
+            "edges": [],
+        },
+    }
+    (processes_dir / "legacy-proc.yaml").write_text(yaml.safe_dump(legacy_record, sort_keys=False))
+
+    loaded = store.load_process("legacy-proc")
+    assert loaded is not None
+    assert loaded.node_types["legacy_node@v1"].version == "v1"
 
 
 def test_store_version_increments(tmp_path: Path):

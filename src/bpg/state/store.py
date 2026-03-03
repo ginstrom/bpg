@@ -71,6 +71,33 @@ class StateStore:
         factors = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0, "d": 86400.0}
         return amount * factors[unit]
 
+    @staticmethod
+    def _infer_version_from_key(name: str) -> Optional[str]:
+        if "@" not in name:
+            return None
+        _, version = name.rsplit("@", 1)
+        return version or None
+
+    @classmethod
+    def _normalize_legacy_definition(cls, definition: Dict[str, Any]) -> Dict[str, Any]:
+        """Backfill missing required fields in legacy persisted process definitions."""
+        normalized = dict(definition)
+        node_types = normalized.get("node_types")
+        if isinstance(node_types, dict):
+            updated_node_types: Dict[str, Any] = {}
+            for node_type_name, node_type_def in node_types.items():
+                if isinstance(node_type_def, dict):
+                    nt = dict(node_type_def)
+                    if "version" not in nt or nt.get("version") in (None, ""):
+                        inferred = cls._infer_version_from_key(node_type_name)
+                        if inferred is not None:
+                            nt["version"] = inferred
+                    updated_node_types[node_type_name] = nt
+                else:
+                    updated_node_types[node_type_name] = node_type_def
+            normalized["node_types"] = updated_node_types
+        return normalized
+
     # ------------------------------------------------------------------
     # Process state (deployed definitions)
     # ------------------------------------------------------------------
@@ -198,7 +225,8 @@ class StateStore:
                 record = yaml.safe_load(f)
                 if not record or "definition" not in record:
                     return None
-                return Process.model_validate(record["definition"])
+                normalized_definition = self._normalize_legacy_definition(record["definition"])
+                return Process.model_validate(normalized_definition)
         except Exception as e:
             raise StateStoreError(f"Failed to load process {process_name}: {e}")
 

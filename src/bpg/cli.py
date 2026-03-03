@@ -13,6 +13,8 @@ Commands:
 
 from __future__ import annotations
 
+import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -31,11 +33,11 @@ console = Console()
 err_console = Console(stderr=True, style="bold red")
 
 
-from bpg.compiler.parser import parse_process_file, ParseError
+from bpg.compiler.parser import parse_process_file, ParseError, load_yaml_file
 from bpg.compiler.validator import validate_process, ValidationError
 from bpg.compiler.visualizer import generate_html
 from bpg.compiler.ir import compile_process
-from bpg.compiler.planner import Plan
+from bpg.compiler.planner import ImmutabilityError, Plan
 from bpg.packaging import (
     build_runtime_spec,
 )
@@ -238,6 +240,101 @@ def _print_plan(process_name: str, process, plan: Plan, old_process=None) -> Non
         console.print(f"  [red]{node_name}[/red] provider artifacts will be removed")
 
 
+def _build_plan_artifact(
+    process_name: str,
+    process,
+    plan: Plan,
+    *,
+    process_file: Path,
+    state_dir: Path,
+    old_process=None,
+) -> dict:
+    old_trigger = old_process.trigger if old_process else None
+    added_or_modified = []
+    for node_name in plan.added_nodes + plan.modified_nodes:
+        node_inst = process.nodes[node_name]
+        node_type = process.node_types[node_inst.node_type]
+        added_or_modified.append(
+            {
+                "node": node_name,
+                "provider": node_type.provider,
+                "config_keys": sorted(node_inst.config.keys()),
+            }
+        )
+
+    old_ir = plan.old_ir
+    new_ir = plan.new_ir
+    return {
+        "format_version": 1,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "process_name": process_name,
+        "process_version": process.metadata.version if process.metadata else None,
+        "process_file": str(process_file),
+        "state_dir": str(state_dir),
+        "has_changes": not plan.is_empty(),
+        "changes": {
+            "trigger_changed": plan.trigger_changed,
+            "trigger": {"old": old_trigger, "new": process.trigger},
+            "added_nodes": plan.added_nodes,
+            "modified_nodes": plan.modified_nodes,
+            "removed_nodes": plan.removed_nodes,
+            "added_edges": plan.added_edges,
+            "removed_edges": plan.removed_edges,
+        },
+        "ir_delta": {
+            "old": {
+                "node_count": len(old_ir.resolved_nodes) if old_ir else 0,
+                "edge_count": len(old_ir.resolved_edges) if old_ir else 0,
+            },
+            "new": {
+                "node_count": len(new_ir.resolved_nodes),
+                "edge_count": len(new_ir.resolved_edges),
+            },
+            "topological_order": list(new_ir.topological_order),
+        },
+        "artifact_preview": {
+            "added_or_modified": added_or_modified,
+            "removed_nodes": plan.removed_nodes,
+        },
+    }
+
+
+def _print_show_summary(plan_doc: dict, plan_file: Path) -> None:
+    process_name = plan_doc.get("process_name", "-")
+    generated_at = plan_doc.get("generated_at", "-")
+    has_changes = bool(plan_doc.get("has_changes", False))
+    changes = plan_doc.get("changes", {})
+    console.print(f"[bold]Plan File:[/bold] {plan_file}")
+    console.print(f"[bold]Process:[/bold] {process_name}")
+    console.print(f"[bold]Generated:[/bold] {generated_at}")
+    console.print(f"[bold]Has Changes:[/bold] {'yes' if has_changes else 'no'}")
+    console.print(
+        "[bold]Counts:[/bold] "
+        f"added={len(changes.get('added_nodes', []))}, "
+        f"modified={len(changes.get('modified_nodes', []))}, "
+        f"removed={len(changes.get('removed_nodes', []))}, "
+        f"edge+={len(changes.get('added_edges', []))}, "
+        f"edge-={len(changes.get('removed_edges', []))}"
+    )
+
+
+def _looks_like_import_registry_file(process_file: Path) -> bool:
+    """Return True when file appears to be an import/registry file, not a process graph."""
+    try:
+        raw = load_yaml_file(process_file)
+    except ParseError:
+        return False
+    if not isinstance(raw, dict):
+        return False
+    has_process_graph = all(key in raw for key in ("nodes", "edges", "trigger"))
+    if has_process_graph:
+        return False
+    has_registry_content = any(
+        key in raw for key in ("types", "node_types", "modules", "imports")
+    )
+    return has_registry_content
+
+
 @app.command()
 def visualize(
     process_file: Path = typer.Argument(
@@ -282,7 +379,18 @@ def visualize(
             import webbrowser
             webbrowser.open(f"file://{output_path.absolute()}")
             
-    except (ParseError, ValidationError) as e:
+    except ParseError as e:
+        if _looks_like_import_registry_file(process_file):
+            err_console.print(
+                "Error: This file looks like a shared import/registry file "
+                "(types/node_types/modules) and not a process graph. "
+                "Visualize a file with nodes/edges/trigger, for example "
+                "'examples/search/ingest.bpg.yaml' or 'examples/search/retrieve.bpg.yaml'."
+            )
+        else:
+            err_console.print(f"Error: {e}")
+        raise typer.Exit(code=1)
+    except (ValidationError, ImmutabilityError) as e:
         err_console.print(f"Error: {e}")
         raise typer.Exit(code=1)
     except Exception as e:
@@ -301,6 +409,12 @@ def plan(
         Path(".bpg-state"),
         "--state-dir",
         help="Directory where BPG state is persisted.",
+    ),
+    out: Path | None = typer.Option(
+        None,
+        "--out",
+        "-o",
+        help="Write machine-readable plan artifact JSON to this file.",
     ),
     providers_file: Path | None = typer.Option(
         None,
@@ -329,6 +443,18 @@ def plan(
         old_ir = compile_process(old_process) if old_process else None
         
         plan = Plan(new_ir=ir, old_ir=old_ir)
+        plan_doc = _build_plan_artifact(
+            process_name,
+            process,
+            plan,
+            process_file=process_file,
+            state_dir=state_dir,
+            old_process=old_process,
+        )
+        if out is not None:
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(plan_doc, indent=2, sort_keys=True) + "\n")
+            console.print(f"[bold green]✓[/bold green] Plan artifact written: [cyan]{out}[/cyan]")
         
         if plan.is_empty():
             console.print(f"[bold green]✓[/bold green] No changes detected for process [cyan]{process_name}[/cyan].")
@@ -337,11 +463,50 @@ def plan(
         _print_plan(process_name, process, plan, old_process=old_process)
         console.print("\nRun [bold]bpg apply[/bold] to deploy these changes.")
         
-    except (ParseError, ValidationError) as e:
+    except (ParseError, ValidationError, ImmutabilityError) as e:
         err_console.print(f"Error: {e}")
         raise typer.Exit(code=1)
     except Exception as e:
         err_console.print(f"Unexpected error: {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def show(
+    plan_file: Path = typer.Argument(
+        ...,
+        help="Path to a plan artifact generated by `bpg plan --out`.",
+        exists=True,
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit raw JSON (similar to `terraform show -json`).",
+    ),
+) -> None:
+    """Inspect a saved BPG plan artifact."""
+    try:
+        raw = plan_file.read_text()
+        plan_doc = json.loads(raw)
+        if not isinstance(plan_doc, dict):
+            err_console.print("Error: plan artifact must be a JSON object.")
+            raise typer.Exit(code=1)
+        if "format_version" not in plan_doc:
+            err_console.print("Error: not a BPG plan artifact (missing format_version).")
+            raise typer.Exit(code=1)
+
+        if json_output:
+            console.print_json(json.dumps(plan_doc, sort_keys=True))
+            return
+
+        _print_show_summary(plan_doc, plan_file)
+    except json.JSONDecodeError as e:
+        err_console.print(f"Error: invalid JSON plan artifact: {e}")
+        raise typer.Exit(code=1)
+    except typer.Exit:
+        raise
+    except Exception as e:
+        err_console.print(f"Error: {e}")
         raise typer.Exit(code=1)
 
 

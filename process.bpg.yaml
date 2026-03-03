@@ -64,12 +64,12 @@ node_types:
       project_id: string
       default_labels: list<string>?
 
-  dashboard.form@v1:
+  dashboard.form@v2:
     description: "Web form provider"
     in: BugReport
     out: BugReport
     provider: dashboard.form
-    version: v1
+    version: v2
     config_schema:
       title: string
       schema: string
@@ -82,7 +82,7 @@ metadata:
 
 nodes:
   intake_form:
-    type: dashboard.form@v1
+    type: dashboard.form@v2
     description: "Web form for submitting new bug reports."
     config:
       title: "Report a Bug"
