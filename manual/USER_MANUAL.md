@@ -16,13 +16,13 @@ BPG (Business Process Graph) lets you define typed workflow graphs in YAML, prev
 Install globally as a CLI app:
 
 ```bash
-uv tool install "git+https://github.com/<org>/<repo>.git"
+uv tool install "git+https://github.com/ginstrom/bpg.git"
 ```
 
 Alternative:
 
 ```bash
-pipx install "git+https://github.com/<org>/<repo>.git"
+pipx install "git+https://github.com/ginstrom/bpg.git"
 ```
 
 ## Setup
@@ -38,16 +38,17 @@ uv run bpg --help
 ```
 
 Available commands:
-- `bpg visualize <process_file> [--providers-file <path>]`
-- `bpg plan <process_file> [--out <plan-file>] [--providers-file <path>]`
+- `bpg visualize <process_file> [--output-dir <dir>] [--open] [--providers-file <path>]`
+- `bpg plan <process_file> [--state-dir <dir>] [--out <plan-file>] [--providers-file <path>]`
 - `bpg show [--json] <plan-file>`
-- `bpg package [process_file] --output-dir <dir> [--force] [--dashboard] [--dashboard-port <port>] [--providers-file <path>]`
+- `bpg package [process_file] --output-dir <dir> [--force] [--dashboard] [--dashboard-port <port>] [--image <ref>] [--providers-file <path>]`
 - `bpg up [process_file] [--local-dir <dir>] [--force] [--dashboard] [--dashboard-port <port>] [--providers-file <path>]`
 - `bpg down [process_file] [--local-dir <dir>]`
 - `bpg logs [--local-dir <dir>] [--service <name>]`
-- `bpg apply <process_file> [--providers-file <path>]`
-- `bpg run <process_name> [--input FILE] [--providers-file <path>]`
-- `bpg status [run_id] [--process PROCESS_NAME]`
+- `bpg apply <process_file> [--state-dir <dir>] [--auto-approve] [--providers-file <path>]`
+- `bpg run <process_name> [--input FILE] [--state-dir <dir>] [--providers-file <path>]`
+- `bpg status [run_id] [--process PROCESS_NAME] [--state-dir <dir>]`
+- `bpg cleanup [--process PROCESS_NAME] [--older-than DURATION] [--status LIST] [--dry-run] [--state-dir <dir>]`
 
 ## Typical Workflow
 1. Edit a process file (for example `process.bpg.yaml`).
@@ -95,6 +96,7 @@ uv run bpg status <run_id>
   - Performs drift check against saved process hash before writing.
   - Deploys/undeploys provider artifacts for changed nodes.
   - Persists process record with incremented version.
+  - `--auto-approve` skips the interactive confirmation prompt.
 - `package`
   - Auto-loads custom provider registry from `bpg.providers.yaml`/`bpg.providers.yml` if present.
   - `--providers-file` can point to a non-default provider registry YAML.
@@ -142,8 +144,14 @@ uv run bpg status <run_id>
 - `status`
   - No `run_id`: lists runs (optionally filtered by `--process`).
   - With `run_id`: prints run metadata and per-node record summaries.
+- `cleanup`
+  - Prunes run records from local state.
+  - `--older-than` accepts duration literals such as `30d` or `12h`.
+  - `--status` filters target runs by status (comma-separated).
+  - `--dry-run` previews deletions without removing anything.
 - `visualize`
   - Generates HTML graph at `.bpg/viz/<process_file_stem>.html` (or `--output-dir`).
+  - `--open` opens the generated HTML in the default browser.
 
 ## Current Validation Rules (Implemented)
 - `types` must be present and non-empty.
@@ -229,7 +237,8 @@ Process records include deployment metadata and integrity pins/checksums (`proce
 Run records include process snapshot metadata (`process_hash`, `process_record_version`, `process_version`).
 
 ## Notes on Duration Format
-Current code accepts duration literals in forms like `500ms`, `30s`, `5m`, `2h`, `1d`.
+Runtime duration parsing currently accepts literals like `500ms`, `30s`, `5m`, `2h`, `1d`.
+ISO 8601 duration strings are accepted only in limited validation paths and should not be relied on for runtime timeout/retry behavior.
 
 ## Troubleshooting
 - Parse/validation error:

@@ -94,7 +94,7 @@ All node inputs and outputs MUST be defined as named, structured types registere
 | `number` | 64-bit float |
 | `bool` | `true` or `false` |
 | `enum(A,B,C)` | Closed set of string values |
-| `duration` | ISO 8601 duration (e.g., `24h`, `PT30M`) |
+| `duration` | Duration string. Runtime currently supports literals like `500ms`, `30s`, `5m`, `2h`, `1d` |
 | `datetime` | ISO 8601 timestamp |
 | `object` | Nested key-value map |
 | `list<T>` | Ordered list of a typed element |
@@ -206,9 +206,11 @@ All providers MUST implement the following interface:
 ```
 invoke(input: TypedPayload, config: ProviderConfig, context: ExecutionContext) -> ExecutionHandle
 poll(handle: ExecutionHandle) -> ExecutionStatus
-await(handle: ExecutionHandle, timeout: Duration) -> TypedOutput
+await_(handle: ExecutionHandle, timeout: Duration) -> TypedOutput
 cancel(handle: ExecutionHandle) -> void
 ```
+
+Python uses `await_` because `await` is a reserved keyword. Providers may also expose `await_result` for compatibility.
 
 All providers MUST:
 
