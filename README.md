@@ -1,221 +1,128 @@
 # BPG
 
-Business Process Graph (BPG) a "business process as code" tool that is inspired
-heavily by terraform.
+BPG lets AI agents build reliable business processes.
 
-It is a declarative workflow system for defining, packaging, and running typed business process graphs.
+AI systems often fail when they generate orchestration code directly. BPG provides a constrained, typed process language so agents can design, validate, and evolve business workflows with deterministic behavior and auditability.
 
-## Why BPG
+Instead of writing orchestration code, define process graphs:
 
-Most workflow automation starts as scripts and ad-hoc integrations, then becomes hard to reason about and operate safely.
+- nodes -> tasks
+- edges -> explicit data flow
+- conditions -> routing decisions
 
-BPG brings infrastructure-as-code discipline to business processes:
+BPG validates the architecture and executes it with consistent runtime semantics.
 
-- `plan/apply` lifecycle for controlled changes
-- typed node contracts for reliable composition
-- deterministic, idempotent execution behavior
-- immutable run/event logs for audit and debugging
-- reproducible local and packaged runtime environments
+## 30-Second Example
 
-In short: BPG makes workflow automation reliable enough to manage like infrastructure.
-
-### AI Agent-Friendly
-
-The structured and text-based nature of BPG makes it especially suited to
-agent-driven app development.
-
-## Motivating Example: Search Ingestion Pipeline
-
-<a href="docs/assets/search-ingest-pipeline.png">
-  <img src="docs/assets/search-ingest-pipeline.png" alt="Search ingestion pipeline" width="320" />
-</a>
-
-<sub>Click the image to open the full-resolution diagram.</sub>
-
-This image is a screenshot of the actual `bpg visualize` output (same renderer used by the dashboard graph view):
-
-```bash
-uv run bpg visualize examples/search/ingest.bpg.yaml --output-dir docs/assets
-google-chrome --headless --disable-gpu \
-  --screenshot=docs/assets/search-ingest-pipeline.png \
-  --window-size=1200,900 \
-  file:///home/ryan/play/bpg/docs/assets/ingest.bpg.html
-```
-
-YAML used to produce this pipeline (`examples/search/ingest.bpg.yaml`):
-
-<!-- BEGIN:search-ingest-yaml -->
 ```yaml
-metadata:
-  name: search-ingest
-  version: 0.1.0
-  description: "Planned markdown ingestion flow for Weaviate."
-
-imports:
-  - ./search-resources.bpg.yaml
-
-node_types:
-  ingest_trigger@v1:
-    in: MarkdownIngestTrigger
-    out: MarkdownIngestTrigger
-    provider: dashboard.form
-    version: v1
-    config_schema: {}
-
-  fs_markdown_list@v1:
-    in: MarkdownIngestTrigger
-    out: MarkdownDocumentList
-    provider: fs.markdown_list
-    version: v1
-    config_schema:
-      root_dir: string?
-      glob: string?
-
-  markdown_chunk@v1:
-    in: MarkdownDocumentList
-    out: MarkdownChunkList
-    provider: text.markdown_chunk
-    version: v1
-    config_schema:
-      chunk_size: number
-      overlap: number
-
-  chunk_embed@v1:
-    in: MarkdownChunkList
-    out: EmbeddingVectorList
-    provider: embed.text
-    version: v1
-    config_schema:
-      model: string?
-
-  weaviate_upsert@v1:
-    in: EmbeddingVectorList
-    out: IngestStats
-    provider: weaviate.upsert
-    version: v1
-    config_schema:
-      store: enum(search_main)
-      collection: string
+process: document_pipeline
 
 nodes:
-  ingest_input:
-    type: ingest_trigger@v1
-    config: {}
+  classify:
+    provider: ai.classify_document
 
-  list_markdown:
-    type: fs_markdown_list@v1
-    config: {}
+  extract:
+    provider: ai.extract_fields
 
-  chunk_markdown:
-    type: markdown_chunk@v1
-    config:
-      chunk_size: 1200
-      overlap: 200
-
-  embed_chunks:
-    type: chunk_embed@v1
-    config:
-      model: text-embedding-3-large
-
-  write_weaviate:
-    type: weaviate_upsert@v1
-    config:
-      store: search_main
-      collection: docs_chunks
-
-trigger: ingest_input
+  review:
+    provider: human.review_form
+    timeout: 24h
 
 edges:
-  - from: ingest_input
-    to: list_markdown
-    with:
-      root_dir: trigger.in.root_dir
-      glob: trigger.in.glob
-  - from: list_markdown
-    to: chunk_markdown
-    with:
-      documents: list_markdown.out.documents
-  - from: chunk_markdown
-    to: embed_chunks
-    with:
-      chunks: chunk_markdown.out.chunks
-  - from: embed_chunks
-    to: write_weaviate
-    with:
-      items: embed_chunks.out.items
+  - from: classify
+    to: extract
+
+  - from: extract
+    to: review
+    when: extract.confidence < 0.8
 ```
-<!-- END:search-ingest-yaml -->
 
-## Install From GitHub
+## Key Capabilities
 
-Install as an application (recommended):
+- Declarative process architecture for agent-generated systems
+- Strong compile-time validation with machine-readable diagnostics
+- Deterministic execution semantics with pluggable backends
+- Human-in-the-loop primitives for review/approval workflows
+- Replayable run/event history for debugging and audits
+
+## Install
 
 ```bash
 uv tool install "git+https://github.com/ginstrom/bpg.git"
-```
-
-or:
-
-```bash
+# or
 pipx install "git+https://github.com/ginstrom/bpg.git"
 ```
-
-Then run:
 
 ```bash
 bpg --help
 ```
 
-## Documentation
-
-- [User Manual](manual/USER_MANUAL.md)
-- [BPG Specification](docs/bpg-spec.md)
-- [Search Examples](examples/search/README.md)
-
-## Quick Plan/Show Workflow
+## Quickstart Commands
 
 ```bash
-uv run bpg plan process.bpg.yaml --out plan.out
-uv run bpg plan process.bpg.yaml --json --explain
-uv run bpg show --json plan.out
-uv run bpg show --json plan.out | jq '.changes'
-```
-
-## Agent Diagnostics
-
-```bash
+uv run bpg init --from-intent "review incoming support requests" --output process.bpg.yaml --todos-out todos.json
 uv run bpg doctor process.bpg.yaml --json
-uv run bpg fmt process.bpg.yaml --check
-uv run bpg suggest-fix process.bpg.yaml --json
-uv run bpg apply-patch process.bpg.yaml patch.json
-uv run bpg test suite.bpg.test.yaml --json
-uv run bpg init --from-intent "review incoming support requests"
+uv run bpg plan process.bpg.yaml --json --explain
+uv run bpg apply process.bpg.yaml --auto-approve
+uv run bpg run <process-name> --input input.json --engine local
 uv run bpg replay <run-id> --json
-uv run bpg plan process.bpg.yaml --json-errors
 ```
 
-## Runtime Backend Selection
+## Documentation Map
 
-`bpg run` now supports explicit backend selection:
+- [Overview](docs/overview.md)
+- [Quickstart](docs/quickstart.md)
+- Concepts:
+  - [Process](docs/concepts/process.md)
+  - [Nodes](docs/concepts/nodes.md)
+  - [Edges](docs/concepts/edges.md)
+  - [Execution](docs/concepts/execution.md)
+  - [Human Steps](docs/concepts/human_steps.md)
+  - [Versioning](docs/concepts/versioning.md)
+- Guides:
+  - [Build Process](docs/guides/build_process.md)
+  - [Add AI Step](docs/guides/add_ai_step.md)
+  - [Add Human Review](docs/guides/add_human_review.md)
+  - [Modify Process](docs/guides/modify_process.md)
+  - [Debug Validation Errors](docs/guides/debug_validation_errors.md)
+  - [Testing Processes](docs/guides/testing_processes.md)
+- Reference:
+  - [Process Schema](docs/reference/process_schema.md)
+  - [Node Schema](docs/reference/node_schema.md)
+  - [Edge Schema](docs/reference/edge_schema.md)
+  - [Type System](docs/reference/type_system.md)
+  - [Provider Interface](docs/reference/provider_interface.md)
+  - [Error Codes](docs/reference/error_codes.md)
+- CLI:
+  - [plan](docs/cli/plan.md)
+  - [apply](docs/cli/apply.md)
+  - [doctor](docs/cli/doctor.md)
+  - [run](docs/cli/run.md)
+- Patterns:
+  - [Approval Workflow](docs/patterns/approval_workflow.md)
+  - [Retry Pattern](docs/patterns/retry_pattern.md)
+  - [Validation Pattern](docs/patterns/validation_pattern.md)
+  - [Parallel Processing](docs/patterns/parallel_processing.md)
+  - [AI Evaluation Pipeline](docs/patterns/ai_evaluation_pipeline.md)
+- Examples:
+  - [Document Pipeline](docs/examples/document_pipeline.md)
+  - [Insurance Claims](docs/examples/insurance_claims.md)
+  - [Support Automation](docs/examples/support_automation.md)
+  - [Compliance Review](docs/examples/compliance_review.md)
+- AI:
+  - [How Agents Should Use BPG](docs/ai/how_agents_should_use_bpg.md)
+  - [Prompt Patterns](docs/ai/prompt_patterns.md)
+  - [Repair Strategies](docs/ai/repair_strategies.md)
 
-```bash
-uv run bpg run <process-name> --input input.yaml --engine langgraph
-uv run bpg run <process-name> --input input.yaml --engine local
-```
+## Existing Deep Spec
 
-## Provider Discovery
-
-```bash
-uv run bpg providers list --json
-uv run bpg providers describe mock --json
-```
+- [BPG Specification (legacy deep draft)](docs/bpg-spec.md)
 
 ## Search Example
 
-Runnable ingestion/retrieval example graphs are in `examples/search/`.
-See [examples/search/README.md](examples/search/README.md).
+Runnable ingestion/retrieval graphs are in [examples/search/README.md](examples/search/README.md).
 
-## Local Dev Setup
+## Local Development
 
 ```bash
 uv venv
