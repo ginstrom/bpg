@@ -68,6 +68,16 @@ uv run bpg run <process-name> --input input.json --engine local
 uv run bpg replay <run-id> --json
 ```
 
+## License
+
+BPG is licensed under the Functional Source License (FSL).
+
+You may use, modify, and distribute this software for any purpose except offering it as a hosted service.
+
+On January 1, 2029 this project will automatically convert to the Apache License 2.0.
+
+See [LICENSE](LICENSE), [LICENSE-APACHE](LICENSE-APACHE), and [NOTICE](NOTICE).
+
 ## Documentation Map
 
 - [Overview](docs/overview.md)

@@ -1,0 +1,101 @@
+BPG Functional Source License (FSL)
+Version 1.0
+
+Copyright (c) 2026 Ryan Ginstrom and contributors.
+
+1. License Grant
+
+Subject to the terms and conditions of this License, the Licensor grants you a
+non-exclusive, worldwide, non-transferable, royalty-free license to:
+
+- use the Software
+- copy the Software
+- modify the Software
+- create derivative works of the Software
+- distribute copies of the Software or derivative works
+
+for any purpose other than a Restricted Use defined below.
+
+2. Restricted Use
+
+You may not use the Software to provide a Competing Service.
+
+A Competing Service means:
+
+A commercial product or service whose primary value is providing the
+functionality of the Software to third parties as a hosted or managed service.
+
+Examples of Restricted Use include:
+
+- offering the Software as a hosted SaaS platform
+- operating a managed service whose core function is the Software
+- selling hosted access to the Software's functionality
+
+The following are explicitly permitted:
+
+- internal use within your organization
+- embedding the Software inside another product where the Software is not the
+  primary offering
+- consulting, integration, or support services using the Software
+- modifying and distributing the Software under this License
+
+3. Redistribution
+
+You may redistribute the Software or derivative works provided that:
+
+1. You include this License with any distribution.
+2. You clearly state any modifications you have made.
+3. You do not remove copyright notices.
+
+Redistributed versions remain subject to this License until the Conversion Date.
+
+4. Conversion to Apache License
+
+On the Conversion Date, this License will automatically convert to the Apache
+License, Version 2.0.
+
+After the Conversion Date:
+
+- this License terminates
+- the Software becomes licensed under Apache 2.0
+- all rights granted by Apache 2.0 apply
+
+Conversion Date
+
+The Conversion Date for this repository is:
+
+January 1, 2029
+
+5. Contributions
+
+Unless explicitly stated otherwise, any contributions submitted to the Software
+are licensed under the same terms as this License.
+
+By submitting a contribution you grant the Licensor the right to include the
+contribution in the Software.
+
+6. Trademarks
+
+This License does not grant rights to use the Licensor's trademarks, service
+marks, or product names except as required to comply with the License.
+
+7. Disclaimer of Warranty
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO:
+
+- MERCHANTABILITY
+- FITNESS FOR A PARTICULAR PURPOSE
+- NON-INFRINGEMENT
+
+8. Limitation of Liability
+
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+DAMAGES, OR OTHER LIABILITY ARISING FROM USE OF THE SOFTWARE.
+
+Apache License (Future)
+
+Beginning on the Conversion Date, the Software will be licensed under:
+
+Apache License, Version 2.0
+https://www.apache.org/licenses/LICENSE-2.0
