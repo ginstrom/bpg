@@ -39,6 +39,7 @@ uv run bpg --help
 
 Available commands:
 - `bpg visualize <process_file> [--output-dir <dir>] [--open] [--providers-file <path>]`
+- `bpg init --from-intent "<intent>" [--output <file>] [--todos-out <file>] [--json]`
 - `bpg plan <process_file> [--state-dir <dir>] [--out <plan-file>] [--providers-file <path>] [--explain] [--json]`
 - `bpg doctor <process_file> [--json] [--providers-file <path>]`
 - `bpg fmt <process_file> [--check] [--write|--no-write]`
@@ -94,6 +95,9 @@ uv run bpg status <run_id>
   - Parses + validates process YAML.
   - Compiles IR and shows diff against deployed process record.
   - Does not execute nodes.
+- `init`
+  - Generates deterministic scaffold YAML from natural-language intent.
+  - Emits structured TODOs for provider selection and mapping completion.
   - `--json-errors` emits structured diagnostics on failures.
 - `doctor`
   - Runs parse + validate + compile checks without mutating state.

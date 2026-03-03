@@ -45,6 +45,7 @@ from bpg.compiler.formatter import format_process_file
 from bpg.compiler.patching import PatchApplyError, apply_json_patch, load_patch_file
 from bpg.compiler.normalize import normalize_process_dict
 from bpg.testing.runner import run_spec_test_suite
+from bpg.scaffold.intent import scaffold_from_intent
 from bpg.packaging import (
     build_runtime_spec,
 )
@@ -869,6 +870,47 @@ def run_spec_tests(
                 console.print(f"    {err}")
 
     raise typer.Exit(code=0 if result["failed"] == 0 else 1)
+
+
+@app.command()
+def init(
+    from_intent: str = typer.Option(
+        ...,
+        "--from-intent",
+        help="Natural-language intent used to generate a process scaffold.",
+    ),
+    output: Path = typer.Option(
+        Path("process.bpg.yaml"),
+        "--output",
+        "-o",
+        help="Where to write generated process YAML.",
+    ),
+    todos_out: Path | None = typer.Option(
+        None,
+        "--todos-out",
+        help="Optional path to write TODO manifest JSON.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit scaffold and TODO payload as JSON to stdout.",
+    ),
+) -> None:
+    """Generate a process scaffold from intent text."""
+    process_doc, todos = scaffold_from_intent(from_intent)
+    canonical = normalize_process_dict(process_doc)
+
+    if json_output:
+        console.print_json(json.dumps({"process": canonical, **todos}, sort_keys=True))
+        return
+
+    output.write_text(yaml.safe_dump(canonical, sort_keys=False).rstrip() + "\n")
+    console.print(f"[bold green]✓[/bold green] Scaffold written: [cyan]{output}[/cyan]")
+    if todos_out is not None:
+        todos_out.write_text(json.dumps(todos, indent=2, sort_keys=True) + "\n")
+        console.print(f"[bold green]✓[/bold green] TODOs written: [cyan]{todos_out}[/cyan]")
+    else:
+        console.print(json.dumps(todos, indent=2, sort_keys=True))
 
 
 @app.command()

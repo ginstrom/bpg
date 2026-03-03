@@ -1,0 +1,55 @@
+"""Template builders for intent-based process scaffolding."""
+
+from __future__ import annotations
+
+import re
+from typing import Any
+
+
+def slugify(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    return slug or "generated-process"
+
+
+def build_base_process(intent: str) -> dict[str, Any]:
+    name = slugify(intent)[:48]
+    return {
+        "metadata": {
+            "name": name,
+            "version": "0.1.0",
+            "description": f"Scaffold generated from intent: {intent}",
+        },
+        "types": {
+            "IntentInput": {"request": "string"},
+            "TaskOutput": {"result": "string"},
+        },
+        "node_types": {
+            "intent_trigger@v1": {
+                "in": "object",
+                "out": "IntentInput",
+                "provider": "dashboard.form",
+                "version": "v1",
+                "config_schema": {},
+            },
+            "task_step@v1": {
+                "in": "IntentInput",
+                "out": "TaskOutput",
+                "provider": "mock",
+                "version": "v1",
+                "config_schema": {},
+            },
+        },
+        "nodes": {
+            "input": {"type": "intent_trigger@v1", "config": {}},
+            "task": {"type": "task_step@v1", "config": {}},
+        },
+        "trigger": "input",
+        "edges": [
+            {
+                "from": "input",
+                "to": "task",
+                "with": {"request": "trigger.in.request"},
+            }
+        ],
+        "output": "task.out",
+    }
