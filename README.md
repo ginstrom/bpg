@@ -180,6 +180,15 @@ uv run bpg show --json plan.out
 uv run bpg show --json plan.out | jq '.changes'
 ```
 
+## Runtime Backend Selection
+
+`bpg run` now supports explicit backend selection:
+
+```bash
+uv run bpg run <process-name> --input input.yaml --engine langgraph
+uv run bpg run <process-name> --input input.yaml --engine local
+```
+
 ## Search Example
 
 Runnable ingestion/retrieval example graphs are in `examples/search/`.

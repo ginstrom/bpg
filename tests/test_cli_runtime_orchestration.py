@@ -4,6 +4,8 @@ from types import SimpleNamespace
 from typer.testing import CliRunner
 
 from bpg.cli import app
+from bpg.providers import PROVIDER_REGISTRY
+from bpg.state.store import StateStore
 
 
 runner = CliRunner()
@@ -161,6 +163,74 @@ def test_run_missing_process_returns_clean_error(tmp_path: Path):
     )
     assert result.exit_code == 1
     assert "UnboundLocalError" not in str(result.exception)
+
+
+def test_run_accepts_engine_option_and_persists_backend(tmp_path: Path):
+    process_file = _write_process(
+        tmp_path,
+        """
+metadata:
+  name: backend-test
+  version: 1.0.0
+types:
+  In:
+    msg: string
+node_types:
+  n@v1:
+    in: In
+    out: In
+    provider: core.passthrough
+    version: v1
+    config_schema: {}
+nodes:
+  n1:
+    type: n@v1
+    config: {}
+trigger: n1
+output: n1.out.msg
+edges: []
+""",
+    )
+    state_dir = tmp_path / "state"
+    input_file = tmp_path / "input.yaml"
+    input_file.write_text("msg: hello\n")
+
+    registry_snapshot = dict(PROVIDER_REGISTRY)
+    try:
+        apply_result = runner.invoke(
+            app,
+            [
+                "apply",
+                str(process_file),
+                "--state-dir",
+                str(state_dir),
+                "--auto-approve",
+            ],
+        )
+        assert apply_result.exit_code == 0
+
+        run_result = runner.invoke(
+            app,
+            [
+                "run",
+                "backend-test",
+                "--state-dir",
+                str(state_dir),
+                "--input",
+                str(input_file),
+                "--engine",
+                "local",
+            ],
+        )
+        assert run_result.exit_code == 0
+
+        store = StateStore(state_dir)
+        runs = store.list_runs(process_name="backend-test")
+        assert runs
+        assert runs[0]["engine_backend"] == "local"
+    finally:
+        PROVIDER_REGISTRY.clear()
+        PROVIDER_REGISTRY.update(registry_snapshot)
 
 
 def test_up_warns_when_required_env_looks_like_placeholder(tmp_path: Path, monkeypatch):

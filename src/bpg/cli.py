@@ -905,6 +905,11 @@ def run(
         help=_PROVIDERS_FILE_HELP,
         exists=False,
     ),
+    engine: str = typer.Option(
+        "langgraph",
+        "--engine",
+        help="Execution backend to use (langgraph or local).",
+    ),
 ) -> None:
     """Trigger a new run of a deployed process with an input payload."""
     try:
@@ -930,10 +935,10 @@ def run(
 
         from bpg.runtime.engine import Engine
 
-        engine = Engine(process=process, state_store=store)
+        engine_runner = Engine(process=process, state_store=store, backend=engine)
 
         with console.status("[bold green]Running process..."):
-            run_id = engine.trigger(input_payload)
+            run_id = engine_runner.trigger(input_payload)
 
         run_record = store.load_run(run_id)
         status_val = (run_record or {}).get("status", "unknown")

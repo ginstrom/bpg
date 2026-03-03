@@ -2,12 +2,24 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from bpg.cli import app
+from bpg.providers import PROVIDER_REGISTRY
 
 
 runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def _restore_provider_registry():
+    snapshot = dict(PROVIDER_REGISTRY)
+    try:
+        yield
+    finally:
+        PROVIDER_REGISTRY.clear()
+        PROVIDER_REGISTRY.update(snapshot)
 
 
 def _write_process_with_custom_provider(tmp_path: Path) -> Path:

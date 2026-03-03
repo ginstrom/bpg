@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict
 
 from bpg.models.schema import Process
+from bpg.runtime.backends import get_backend
 
 
 class EngineError(Exception):
@@ -40,9 +41,10 @@ class Engine:
         state_store: A ``StateStore`` instance for persisting run records.
     """
 
-    def __init__(self, process: Process, state_store: Any) -> None:
+    def __init__(self, process: Process, state_store: Any, backend: str = "langgraph") -> None:
         self._process = process
         self._state_store = state_store
+        self._backend_name = backend
 
     def trigger(self, input_payload: Dict[str, Any]) -> str:
         """Start a new process run and return the unique ``run_id``.
@@ -58,10 +60,6 @@ class Engine:
             EngineError: If the input payload fails type validation.
         """
         import uuid
-        from bpg.compiler.ir import compile_process
-        from bpg.compiler.validator import validate_process
-        from bpg.providers import PROVIDER_REGISTRY
-        from bpg.runtime.langgraph_runtime import LangGraphRuntime
 
         run_id = str(uuid.uuid4())
         process_name = (
@@ -83,8 +81,13 @@ class Engine:
             process_name,
             input_payload,
             process_snapshot=process_snapshot,
+            engine_backend=self._backend_name,
         )
-        self._execute_run(run_id=run_id, input_payload=input_payload)
+        self._execute_run(
+            run_id=run_id,
+            input_payload=input_payload,
+            backend_name=self._backend_name,
+        )
         return run_id
 
     def step(self, run_id: str) -> None:
@@ -111,26 +114,14 @@ class Engine:
 
         # Replays the run idempotently using the same run_id so provider calls
         # can deduplicate external effects by idempotency key.
-        self._execute_run(run_id=run_id, input_payload=input_payload)
+        backend_name = run_record.get("engine_backend", self._backend_name)
+        self._execute_run(
+            run_id=run_id,
+            input_payload=input_payload,
+            backend_name=backend_name,
+        )
 
-    def _execute_run(self, run_id: str, input_payload: Dict[str, Any]) -> None:
-        from bpg.compiler.ir import compile_process
-        from bpg.compiler.validator import validate_process
-        from bpg.providers import PROVIDER_REGISTRY
-        from bpg.runtime.langgraph_runtime import LangGraphRuntime
-
-        # Compile IR (raises ValidationError if invalid)
-        validate_process(self._process)
-        ir = compile_process(self._process)
-
-        # Build providers from registry (skip any that need special init args)
-        providers: Dict[str, Any] = {}
-        for pid, cls in PROVIDER_REGISTRY.items():
-            try:
-                providers[pid] = cls()
-            except Exception:
-                pass
-
+    def _execute_run(self, run_id: str, input_payload: Dict[str, Any], backend_name: str) -> None:
         cached_results: Dict[str, Dict[str, Any]] = {}
         for node_rec in self._state_store.list_node_records(run_id).values():
             if node_rec.get("status") != "completed":
@@ -140,12 +131,18 @@ class Engine:
             if isinstance(cache_key, str) and isinstance(cache_output, dict):
                 cached_results[cache_key] = cache_output
 
-        runtime = LangGraphRuntime(
-            ir=ir,
-            providers=providers,
-            initial_result_cache=cached_results,
+        try:
+            backend = get_backend(str(backend_name))
+        except ValueError as exc:
+            raise EngineError(str(exc)) from exc
+
+        final_state = backend.run(
+            process=self._process,
+            state_store=self._state_store,
+            run_id=run_id,
+            input_payload=input_payload,
+            cached_results=cached_results,
         )
-        final_state = runtime.run(input_payload=input_payload, run_id=run_id)
 
         for entry in final_state.get("execution_log", []):
             node_name = entry.get("node")
@@ -157,6 +154,7 @@ class Engine:
         updates = {
             "status": run_status,
             "completed_at": datetime.now(timezone.utc).isoformat(),
+            "engine_backend": backend_name,
         }
         if "process_output" in final_state:
             updates["output"] = final_state["process_output"]

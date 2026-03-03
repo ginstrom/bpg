@@ -46,7 +46,7 @@ Available commands:
 - `bpg down [process_file] [--local-dir <dir>]`
 - `bpg logs [--local-dir <dir>] [--service <name>]`
 - `bpg apply <process_file> [--state-dir <dir>] [--auto-approve] [--providers-file <path>]`
-- `bpg run <process_name> [--input FILE] [--state-dir <dir>] [--providers-file <path>]`
+- `bpg run <process_name> [--input FILE] [--state-dir <dir>] [--providers-file <path>] [--engine langgraph|local]`
 - `bpg status [run_id] [--process PROCESS_NAME] [--state-dir <dir>]`
 - `bpg cleanup [--process PROCESS_NAME] [--older-than DURATION] [--status LIST] [--dry-run] [--state-dir <dir>]`
 
@@ -140,6 +140,7 @@ uv run bpg status <run_id>
   - `--providers-file` can point to a non-default provider registry YAML.
   - Loads deployed process by `metadata.name`.
   - Accepts YAML or JSON input via `--input`; defaults to `{}`.
+  - `--engine` selects execution backend (`langgraph` default, `local` available for pluggability testing).
   - Executes end-to-end and persists run/node/event records.
 - `status`
   - No `run_id`: lists runs (optionally filtered by `--process`).

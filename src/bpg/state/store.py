@@ -285,6 +285,7 @@ class StateStore:
         process_name: str,
         input_payload: Dict[str, Any],
         process_snapshot: Optional[Dict[str, Any]] = None,
+        engine_backend: Optional[str] = None,
     ) -> None:
         """Create a new run record.  Must be called before any node records.
 
@@ -311,6 +312,8 @@ class StateStore:
         }
         if process_snapshot:
             record.update(process_snapshot)
+        if engine_backend:
+            record["engine_backend"] = engine_backend
         try:
             with open(run_dir / "run.yaml", "w") as f:
                 yaml.safe_dump(record, f, sort_keys=False)
