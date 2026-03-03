@@ -341,6 +341,21 @@ def _emit_error_json(exc: Exception) -> None:
     )
 
 
+def _diagnostic_for_exception(exc: Exception) -> dict:
+    diag = getattr(exc, "diagnostic", None)
+    if isinstance(diag, CompilerDiagnostic):
+        return diag.to_dict()
+    return {
+        "error_code": "E_UNKNOWN",
+        "path": "$",
+        "message": str(exc),
+        "fix": None,
+        "example_patch": [],
+        "schema_excerpt": {},
+        "severity": "error",
+    }
+
+
 def _looks_like_import_registry_file(process_file: Path) -> bool:
     """Return True when file appears to be an import/registry file, not a process graph."""
     try:
@@ -500,6 +515,53 @@ def plan(
     except Exception as e:
         err_console.print(f"Unexpected error: {e}")
         raise typer.Exit(code=1)
+
+
+@app.command()
+def doctor(
+    process_file: Path = typer.Argument(
+        ...,
+        help="Path to the process definition file (e.g. process.bpg.yaml).",
+        exists=True,
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable diagnostics JSON.",
+    ),
+    providers_file: Path | None = typer.Option(
+        None,
+        "--providers-file",
+        help=_PROVIDERS_FILE_HELP,
+        exists=False,
+    ),
+) -> None:
+    """Validate a process and print actionable diagnostics for agents."""
+    diagnostics: list[dict] = []
+    try:
+        _load_declared_providers_or_exit(providers_file)
+        process = parse_process_file(process_file)
+        validate_process(process)
+        _ = compile_process(process)
+    except (ParseError, ValidationError, ImmutabilityError) as e:
+        diagnostics.append(_diagnostic_for_exception(e))
+    except Exception as e:
+        diagnostics.append(_diagnostic_for_exception(e))
+
+    if json_output:
+        console.print_json(json.dumps({"ok": not diagnostics, "errors": diagnostics}, sort_keys=True))
+    else:
+        if diagnostics:
+            for diag in diagnostics:
+                err_console.print(
+                    f"{diag['error_code']} {diag['path']}: {diag['message']}"
+                )
+                if diag.get("fix"):
+                    err_console.print(f"  fix: {diag['fix']}")
+        else:
+            console.print("[bold green]✓[/bold green] No diagnostics found.")
+
+    raise typer.Exit(code=1 if diagnostics else 0)
 
 
 @app.command()

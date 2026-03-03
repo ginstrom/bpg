@@ -180,6 +180,13 @@ uv run bpg show --json plan.out
 uv run bpg show --json plan.out | jq '.changes'
 ```
 
+## Agent Diagnostics
+
+```bash
+uv run bpg doctor process.bpg.yaml --json
+uv run bpg plan process.bpg.yaml --json-errors
+```
+
 ## Runtime Backend Selection
 
 `bpg run` now supports explicit backend selection:
