@@ -1,5 +1,11 @@
 # Business Process Graph (BPG) Specification
 
+> Legacy draft documentation.
+>
+> This file is retained for historical context and may diverge from current behavior.
+> Canonical documentation lives under `docs/overview.md`, `docs/concepts/`,
+> `docs/guides/`, and `docs/reference/`.
+
 **Version:** 0.2 (Draft)
 **Status:** In Review
 

@@ -124,10 +124,6 @@ See [LICENSE](LICENSE), [LICENSE-APACHE](LICENSE-APACHE), and [NOTICE](NOTICE).
   - [Prompt Patterns](docs/ai/prompt_patterns.md)
   - [Repair Strategies](docs/ai/repair_strategies.md)
 
-## Existing Deep Spec
-
-- [BPG Specification (legacy deep draft)](docs/bpg-spec.md)
-
 ## Search Example
 
 Runnable ingestion/retrieval graphs are in [examples/search/README.md](examples/search/README.md).
