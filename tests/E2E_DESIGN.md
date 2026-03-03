@@ -52,3 +52,10 @@ This document outlines the strategy and test cases for verifying the BPG lifecyc
 ## 4. Implementation
 - Test code is located in `tests/e2e/test_lifecycle.py`.
 - Execution: `make test-e2e`.
+
+## 5. Container Install Smoke Test
+- Test code: `tests/e2e/test_install_smoke.py`
+- Purpose: validate that `bpg` can be installed in a fresh Docker container and run basic `plan/apply/run` commands.
+- Execution: included in the standard e2e suite (`make test-e2e`).
+  - The test auto-skips when Docker is unavailable.
+  - Optional image override: `BPG_E2E_DOCKER_IMAGE=python:3.12-slim`
