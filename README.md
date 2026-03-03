@@ -20,35 +20,6 @@ metadata:
   version: 1.0.0
   description: "Parse numbers from text and compute their sum."
 
-types:
-  TextIn:
-    text: string
-  NumbersOut:
-    numbers: list<number>
-  SumOut:
-    sum: number
-    count: number
-
-node_types:
-  ingest@v1:
-    in: TextIn
-    out: TextIn
-    provider: core.passthrough
-    version: v1
-    config_schema: {}
-  parse_numbers@v1:
-    in: TextIn
-    out: NumbersOut
-    provider: text.parse_numbers
-    version: v1
-    config_schema: {}
-  sum_numbers@v1:
-    in: NumbersOut
-    out: SumOut
-    provider: math.sum_numbers
-    version: v1
-    config_schema: {}
-
 nodes:
   ingest:
     type: ingest@v1
@@ -75,21 +46,18 @@ edges:
 output: sum.out
 ```
 
-Run it:
+This shows the graph shape only. For a full runnable version (including `types` and `node_types`), use [`examples/wrappers/parse-sum-email/process.bpg.yaml`](examples/wrappers/parse-sum-email/process.bpg.yaml).
+
+Run the full example:
 
 ```bash
-cat > process.bpg.yaml <<'YAML'
-# paste the YAML above
-YAML
-
-cat > input.yaml <<'YAML'
-text: "Invoice totals are 12, 8, and 5"
-YAML
-
-uv run bpg doctor process.bpg.yaml
-uv run bpg apply process.bpg.yaml --auto-approve
-uv run bpg run readme-quickstart --input input.yaml --engine local
+uv run bpg doctor examples/wrappers/parse-sum-email/process.bpg.yaml
+uv run bpg apply examples/wrappers/parse-sum-email/process.bpg.yaml --auto-approve
+uv run bpg run sample-parse-sum-email --input examples/wrappers/parse-sum-email/input.yaml --engine local
+uv run bpg visualize examples/wrappers/parse-sum-email/process.bpg.yaml --output-dir docs/assets
 ```
+
+![Example process visualization](docs/assets/readme-visualize.png)
 
 ## Key Capabilities
 
