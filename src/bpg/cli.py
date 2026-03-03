@@ -41,6 +41,7 @@ from bpg.compiler.visualizer import generate_html
 from bpg.compiler.ir import compile_process
 from bpg.compiler.planner import ImmutabilityError, Plan
 from bpg.compiler.errors import CompilerDiagnostic
+from bpg.compiler.formatter import format_process_file
 from bpg.packaging import (
     build_runtime_spec,
 )
@@ -618,6 +619,50 @@ def doctor(
             console.print("[bold green]✓[/bold green] No diagnostics found.")
 
     raise typer.Exit(code=1 if diagnostics else 0)
+
+
+@app.command()
+def fmt(
+    process_file: Path = typer.Argument(
+        ...,
+        help="Path to the process definition file (e.g. process.bpg.yaml).",
+        exists=True,
+    ),
+    check: bool = typer.Option(
+        False,
+        "--check",
+        help="Check formatting only; exit non-zero if file would change.",
+    ),
+    write: bool = typer.Option(
+        True,
+        "--write/--no-write",
+        help="Write canonical formatting back to file.",
+    ),
+) -> None:
+    """Canonicalize process YAML ordering and formatting."""
+    try:
+        formatted, changed = format_process_file(process_file)
+    except ParseError as e:
+        err_console.print(f"Error: {e}")
+        raise typer.Exit(code=1)
+
+    if check:
+        if changed:
+            err_console.print(f"Formatting needed: {process_file}")
+            raise typer.Exit(code=1)
+        console.print(f"[bold green]✓[/bold green] Already canonical: [cyan]{process_file}[/cyan]")
+        return
+
+    if write and changed:
+        process_file.write_text(formatted)
+        console.print(f"[bold green]✓[/bold green] Formatted: [cyan]{process_file}[/cyan]")
+        return
+
+    if write:
+        console.print(f"[bold green]✓[/bold green] Already canonical: [cyan]{process_file}[/cyan]")
+        return
+
+    console.print(formatted, end="")
 
 
 @app.command()
