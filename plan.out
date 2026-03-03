@@ -1,0 +1,52 @@
+{
+  "artifact_preview": {
+    "added_or_modified": [
+      {
+        "config_keys": [
+          "schema",
+          "title"
+        ],
+        "node": "intake_form",
+        "provider": "dashboard.form"
+      }
+    ],
+    "removed_nodes": []
+  },
+  "changes": {
+    "added_edges": [],
+    "added_nodes": [],
+    "modified_nodes": [
+      "intake_form"
+    ],
+    "removed_edges": [],
+    "removed_nodes": [],
+    "trigger": {
+      "new": "intake_form",
+      "old": "intake_form"
+    },
+    "trigger_changed": false
+  },
+  "format_version": 1,
+  "generated_at": "2026-03-03T01:18:36.171651+00:00",
+  "has_changes": true,
+  "ir_delta": {
+    "new": {
+      "edge_count": 4,
+      "node_count": 4
+    },
+    "old": {
+      "edge_count": 4,
+      "node_count": 4
+    },
+    "topological_order": [
+      "intake_form",
+      "triage",
+      "approval",
+      "gitlab"
+    ]
+  },
+  "process_file": "process.bpg.yaml",
+  "process_name": "bug-triage-process",
+  "process_version": "1.4.0",
+  "state_dir": ".bpg-state"
+}
