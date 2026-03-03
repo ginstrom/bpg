@@ -1,6 +1,6 @@
 # BPG
 
-BPG lets AI agents build reliable business processes.
+Business Process Graph (BPG) lets AI agents build reliable business processes.
 
 AI systems often fail when they generate orchestration code directly. BPG provides a constrained, typed process language so agents can design, validate, and evolve business workflows with deterministic behavior and auditability.
 
