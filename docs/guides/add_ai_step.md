@@ -35,13 +35,16 @@ types:
     items: list<object>
 
 node_types:
-  select_reviews@v1:
+  read_reviews@v1:
     in: ReviewSelectIn
     out: ReviewBatchIn
-    provider: core.dataset.select_rows
+    provider: core.csv.read
     version: v1
     config_schema:
-      rows: list<object>
+      path: string
+      review_column: string?
+      sentiment_column: string?
+      output_sentiment_field: string?
 
   classify@v1:
     in: ReviewBatchIn
@@ -56,10 +59,13 @@ node_types:
       api_key_env: string?
 
 nodes:
-  select:
-    type: select_reviews@v1
+  read_csv:
+    type: read_reviews@v1
     config:
-      rows: ${IMDB_ROWS}
+      path: examples/ai/gemini-imdb/imdb_first10.csv
+      review_column: review
+      sentiment_column: sentiment
+      output_sentiment_field: source_sentiment
 
   classify:
     type: classify@v1
@@ -71,13 +77,13 @@ nodes:
 
 edges:
   - from: ingest
-    to: select
+    to: read_csv
     with:
       row_ids: ingest.out.row_ids
-  - from: select
+  - from: read_csv
     to: classify
     with:
-      rows: select.out.rows
+      rows: read_csv.out.rows
 
 artifacts:
   - name: classified_items

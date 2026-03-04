@@ -479,6 +479,7 @@ class TestProviderRegistry:
             "queue.kafka",
             "core.passthrough",
             "core.dataset.select_rows",
+            "core.csv.read",
             "flow.loop",
             "flow.fanout",
             "flow.await_all",

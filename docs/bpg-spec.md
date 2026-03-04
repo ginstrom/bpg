@@ -201,6 +201,7 @@ Providers are pluggable execution backends responsible for carrying out work on 
 | `ai.llm` | AI/Automation | Compatibility alias for `ai.anthropic` |
 | `agent.pipeline` | AI/Automation | Invokes an AI agent pipeline |
 | `core.dataset.select_rows` | Data | Selects typed rows from an inline dataset by `row_ids` |
+| `core.csv.read` | Data | Reads typed rows from CSV and can filter by `row_ids` |
 | `slack.interactive` | Human | Posts interactive messages to Slack |
 | `dashboard.form` | Human | Renders a web form for structured input |
 | `http.webhook` | Integration | Sends/receives HTTP callbacks |

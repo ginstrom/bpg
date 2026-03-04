@@ -1,6 +1,8 @@
 # Gemini IMDB Structured Extraction Example
 
-This example runs `ai.google` with `gemini-2.5-flash-lite` against a small IMDB sample (first 10 rows from `~/Downloads/IMDB.csv`) and returns structured enrichment fields.
+This example runs `ai.google` with `gemini-2.5-flash-lite` against a small IMDB
+sample (first 10 rows from IMDB review db) and returns structured enrichment fields.
+Rows are read from `imdb_first10.csv` at runtime via `core.csv.read`.
 
 ## Files
 
@@ -52,25 +54,13 @@ They are written under:
 .bpg-state/runs/<run_id>/artifacts/
 ```
 
-## Regenerate input from CSV
+## Data source
 
-If you replace `imdb_first10.csv`, regenerate `input.yaml`:
+`process.bpg.yaml` reads from:
 
-```bash
-source .venv/bin/activate
-uv run python - <<'PY'
-import csv
-from pathlib import Path
-import yaml
-
-csv_path = Path('examples/ai/gemini-imdb/imdb_first10.csv')
-out_path = Path('examples/ai/gemini-imdb/input.yaml')
-row_ids = []
-with csv_path.open(newline='', encoding='utf-8') as f:
-    reader = csv.DictReader(f)
-    for idx, row in enumerate(reader, start=1):
-        row_ids.append(idx)
-out_path.write_text(yaml.safe_dump({'row_ids': row_ids[:3]}, sort_keys=False), encoding='utf-8')
-print(f'wrote {out_path} selecting rows: {row_ids[:3]}')
-PY
+```text
+examples/ai/gemini-imdb/imdb_first10.csv
 ```
+
+The reader auto-assigns `row_id` values (1-based by file order), so `row_ids: [1,2,3]`
+selects the first three rows in the CSV.
