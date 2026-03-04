@@ -285,6 +285,101 @@ edges: []
     assert by_name["SMTP_FROM"].required is False
 
 
+def test_provider_requirements_add_env_for_ai_llm_anthropic(tmp_path: Path):
+    process_file = _write_process(
+        tmp_path,
+        """
+metadata:
+  name: p5
+  version: 1.0.0
+types:
+  In:
+    text: string
+  Out:
+    risk: string
+node_types:
+  extract@v1:
+    in: In
+    out: Out
+    provider: ai.llm
+    version: v1
+    config_schema:
+      model: string
+nodes:
+  extract:
+    type: extract@v1
+    config:
+      vendor: anthropic
+      model: claude-3-5-sonnet-latest
+trigger: extract
+edges: []
+""",
+    )
+    process = parse_process_file(process_file)
+    spec = infer_package_spec(process, process_file.read_text(), env={})
+    by_name = {v.name: v for v in spec.env_vars}
+    assert by_name["ANTHROPIC_API_KEY"].required is True
+
+
+def test_provider_requirements_add_env_for_ai_openai_google_ollama(tmp_path: Path):
+    process_file = _write_process(
+        tmp_path,
+        """
+metadata:
+  name: p6
+  version: 1.0.0
+types:
+  In:
+    text: string
+  Out:
+    risk: string
+node_types:
+  openai@v1:
+    in: In
+    out: Out
+    provider: ai.openai
+    version: v1
+    config_schema:
+      model: string
+  google@v1:
+    in: In
+    out: Out
+    provider: ai.google
+    version: v1
+    config_schema:
+      model: string
+  ollama@v1:
+    in: In
+    out: Out
+    provider: ai.ollama
+    version: v1
+    config_schema:
+      model: string
+nodes:
+  openai:
+    type: openai@v1
+    config:
+      model: gpt-4.1-mini
+  google:
+    type: google@v1
+    config:
+      model: gemini-1.5-flash
+  ollama:
+    type: ollama@v1
+    config:
+      model: llama3.1
+trigger: openai
+edges: []
+""",
+    )
+    process = parse_process_file(process_file)
+    spec = infer_package_spec(process, process_file.read_text(), env={})
+    by_name = {v.name: v for v in spec.env_vars}
+    assert by_name["OPENAI_API_KEY"].required is True
+    assert by_name["GOOGLE_API_KEY"].required is True
+    assert "OLLAMA_API_KEY" not in by_name
+
+
 def test_metadata_contains_dashboard_fields(tmp_path: Path):
     process_file = _write_process(
         tmp_path,

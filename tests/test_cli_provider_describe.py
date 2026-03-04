@@ -15,6 +15,11 @@ def test_providers_list_json_includes_registered_provider_names():
     names = {item["name"] for item in payload["providers"]}
     assert "mock" in names
     assert "http.webhook" in names
+    assert "ai.anthropic" in names
+    assert "ai.openai" in names
+    assert "ai.google" in names
+    assert "ai.ollama" in names
+    assert "ai.llm" in names
 
 
 def test_providers_describe_json_returns_metadata():

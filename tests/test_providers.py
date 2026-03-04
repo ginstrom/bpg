@@ -19,6 +19,11 @@ from unittest.mock import patch
 import pytest
 
 from bpg.providers import (
+    AiAnthropicProvider,
+    AiGoogleProvider,
+    AiLlmProvider,
+    AiOllamaProvider,
+    AiOpenAIProvider,
     AgentPipelineProvider,
     BpgProcessCallProvider,
     DashboardFormProvider,
@@ -462,6 +467,11 @@ class TestProviderRegistry:
             "mock",
             "http.webhook",
             "slack.interactive",
+            "ai.anthropic",
+            "ai.openai",
+            "ai.google",
+            "ai.ollama",
+            "ai.llm",
             "agent.pipeline",
             "dashboard.form",
             "http.gitlab",
@@ -610,6 +620,166 @@ class TestBuiltInProviders:
         out = provider.await_result(handle)
         assert out["source"] == "https://search.local"
         assert out["results"][0]["title"] == "A"
+
+    def test_ai_llm_anthropic_live_mode_calls_endpoint_and_parses_json(self):
+        provider = AiAnthropicProvider()
+        ctx = _ctx(node_name="extract")
+
+        class _Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b'{"content":[{"type":"text","text":"{\\"risk\\":\\"high\\"}"}]}'
+
+        with patch("bpg.providers.ai.base.urllib.request.urlopen", return_value=_Resp()) as mock_urlopen:
+            with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "k"}, clear=False):
+                handle = provider.invoke(
+                    {"text": "prod is down"},
+                    {
+                        "model": "claude-3-5-sonnet-latest",
+                        "output_schema": {
+                            "type": "object",
+                            "required": ["risk"],
+                            "properties": {"risk": {"type": "string"}},
+                        },
+                    },
+                    ctx,
+                )
+        out = provider.await_result(handle)
+        assert out["risk"] == "high"
+        req = mock_urlopen.call_args.args[0]
+        headers = {k.lower(): v for k, v in req.header_items()}
+        assert headers["x-api-key"] == "k"
+        body = json.loads(req.data.decode("utf-8"))
+        assert body["model"] == "claude-3-5-sonnet-latest"
+        assert body["messages"][0]["role"] == "user"
+
+    def test_ai_llm_requires_api_key(self):
+        provider = AiAnthropicProvider()
+        ctx = _ctx(node_name="extract")
+        with patch.dict("os.environ", {}, clear=True):
+            with pytest.raises(ProviderError, match="missing required env ANTHROPIC_API_KEY"):
+                provider.invoke(
+                    {"text": "prod is down"},
+                    {"model": "claude-3-5-sonnet-latest"},
+                    ctx,
+                )
+
+    def test_ai_llm_rejects_output_schema_mismatch(self):
+        provider = AiAnthropicProvider()
+        ctx = _ctx(node_name="extract")
+        with pytest.raises(ProviderError, match="output failed schema checks"):
+            provider.invoke(
+                {"text": "anything"},
+                {
+                    "model": "claude-3-5-sonnet-latest",
+                    "dry_run": True,
+                    "mock_output": {"risk": 10},
+                    "output_schema": {
+                        "type": "object",
+                        "required": ["risk"],
+                        "properties": {"risk": {"type": "string"}},
+                    },
+                },
+                ctx,
+            )
+
+    def test_ai_openai_live_mode_calls_endpoint_and_parses_json(self):
+        provider = AiOpenAIProvider()
+        ctx = _ctx(node_name="extract")
+
+        class _Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b'{"output":[{"content":[{"type":"output_text","text":"{\\"risk\\":\\"med\\"}"}]}]}'
+
+        with patch("bpg.providers.ai.base.urllib.request.urlopen", return_value=_Resp()) as mock_urlopen:
+            with patch.dict("os.environ", {"OPENAI_API_KEY": "k"}, clear=False):
+                handle = provider.invoke({"text": "prod is down"}, {"model": "gpt-4.1-mini"}, ctx)
+
+        out = provider.await_result(handle)
+        assert out["risk"] == "med"
+        req = mock_urlopen.call_args.args[0]
+        headers = {k.lower(): v for k, v in req.header_items()}
+        assert headers["authorization"] == "Bearer k"
+
+    def test_ai_openai_requires_api_key(self):
+        provider = AiOpenAIProvider()
+        with patch.dict("os.environ", {}, clear=True):
+            with pytest.raises(ProviderError, match="missing required env OPENAI_API_KEY"):
+                provider.invoke({"text": "x"}, {"model": "gpt-4.1-mini"}, _ctx(node_name="extract"))
+
+    def test_ai_google_live_mode_calls_endpoint_and_parses_json(self):
+        provider = AiGoogleProvider()
+        ctx = _ctx(node_name="extract")
+
+        class _Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b'{"candidates":[{"content":{"parts":[{"text":"{\\"risk\\":\\"low\\"}"}]}}]}'
+
+        with patch("bpg.providers.ai.base.urllib.request.urlopen", return_value=_Resp()) as mock_urlopen:
+            with patch.dict("os.environ", {"GOOGLE_API_KEY": "k"}, clear=False):
+                handle = provider.invoke({"text": "prod is down"}, {"model": "gemini-1.5-flash"}, ctx)
+
+        out = provider.await_result(handle)
+        assert out["risk"] == "low"
+        req = mock_urlopen.call_args.args[0]
+        assert "key=k" in req.full_url
+
+    def test_ai_google_requires_api_key(self):
+        provider = AiGoogleProvider()
+        with patch.dict("os.environ", {}, clear=True):
+            with pytest.raises(ProviderError, match="missing required env GOOGLE_API_KEY"):
+                provider.invoke({"text": "x"}, {"model": "gemini-1.5-flash"}, _ctx(node_name="extract"))
+
+    def test_ai_ollama_live_mode_calls_endpoint_and_parses_json(self):
+        provider = AiOllamaProvider()
+        ctx = _ctx(node_name="extract")
+
+        class _Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b'{"response":"{\\"risk\\":\\"high\\"}"}'
+
+        with patch("bpg.providers.ai.base.urllib.request.urlopen", return_value=_Resp()) as mock_urlopen:
+            handle = provider.invoke({"text": "prod is down"}, {"model": "llama3.1"}, ctx)
+
+        out = provider.await_result(handle)
+        assert out["risk"] == "high"
+        req = mock_urlopen.call_args.args[0]
+        assert req.full_url == "http://localhost:11434/api/generate"
+
+    def test_ai_ollama_packaging_requirements_no_required_env(self):
+        provider = AiOllamaProvider()
+        reqs = provider.packaging_requirements({"model": "llama3.1"})
+        assert reqs["required_env"] == []
+        assert reqs["optional_env"] == []
+
+    def test_ai_llm_compatibility_alias_uses_anthropic_contract(self):
+        provider = AiLlmProvider()
+        with patch.dict("os.environ", {}, clear=True):
+            with pytest.raises(ProviderError, match="missing required env ANTHROPIC_API_KEY"):
+                provider.invoke({"text": "x"}, {"model": "claude-3-5-sonnet-latest"}, _ctx(node_name="extract"))
 
     def test_email_notify_dry_run(self):
         provider = EmailNotifyProvider()
