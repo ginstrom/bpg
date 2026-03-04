@@ -91,6 +91,8 @@ edges: []
     result = runner.invoke(app, ["up", str(process_file), "--local-dir", str(out_dir)])
     assert result.exit_code == 0
     assert (out_dir / "docker-compose.yml").exists()
+    assert (out_dir / "state").is_dir()
+    assert (out_dir / "state" / ".gitkeep").exists()
     assert builds and builds[0][0] == "bpg-local:dev"
     assert calls and calls[0][1] == ["up", "-d"]
 

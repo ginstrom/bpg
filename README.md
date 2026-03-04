@@ -151,6 +151,7 @@ See [LICENSE](LICENSE), [LICENSE-APACHE](LICENSE-APACHE), and [NOTICE](NOTICE).
 
 - Search ingestion/retrieval graphs: [examples/search/README.md](examples/search/README.md)
 - Wrapper-focused examples: [examples/wrappers/README.md](examples/wrappers/README.md)
+- Gemini structured extraction with run artifacts: [examples/ai/gemini-imdb/README.md](examples/ai/gemini-imdb/README.md)
 
 ## Local Development
 

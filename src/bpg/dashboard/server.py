@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from bpg.compiler.ir import compile_process
 from bpg.compiler.parser import parse_process_file
@@ -30,7 +30,7 @@ def _field_kind(type_expr: str) -> dict[str, Any]:
         return {"kind": "enum", "values": values}
     if raw.startswith("list<") and raw.endswith(">"):
         return {"kind": "list", "item": raw[5:-1]}
-    if raw in {"string", "number", "bool", "object"}:
+    if raw in {"string", "number", "integer", "bool", "object"}:
         return {"kind": raw}
     if raw.endswith("?"):
         base = raw[:-1]
@@ -134,6 +134,10 @@ def _dashboard_html() -> str:
         <div class=\"body\"><div id=\"events\" class=\"events\"></div></div>
       </div>
       <div class=\"panel\">
+        <h3>Artifacts</h3>
+        <div class=\"body\"><div id=\"artifacts\" class=\"runs\"></div></div>
+      </div>
+      <div class=\"panel\">
         <h3>Trigger Input</h3>
         <div class=\"body\">
           <form id=\"triggerForm\"></form>
@@ -144,7 +148,7 @@ def _dashboard_html() -> str:
     </section>
   </div>
 <script>
-const state = { process: null, runs: [], selectedRun: null };
+const state = { process: null, runs: [], selectedRun: null, artifacts: [] };
 
 async function getJson(path) {
   const res = await fetch(path);
@@ -159,7 +163,7 @@ function renderRuns() {
     const el = document.createElement('div');
     el.className = 'run-item' + (state.selectedRun === run.run_id ? ' is-selected' : '');
     el.innerHTML = `<strong>${run.run_id}</strong><br/>status=${run.status} started=${run.started_at || ''}`;
-    el.onclick = () => { state.selectedRun = run.run_id; renderRuns(); refreshEvents(); };
+    el.onclick = () => { state.selectedRun = run.run_id; renderRuns(); refreshEvents(); refreshArtifacts(); };
     root.appendChild(el);
   }
 }
@@ -175,10 +179,66 @@ async function refreshEvents() {
   }
 }
 
+function renderArtifacts() {
+  const root = document.getElementById('artifacts');
+  root.innerHTML = '';
+  if (!state.selectedRun) { root.textContent = 'No run selected'; return; }
+  if (!state.artifacts.length) { root.textContent = 'No artifacts for this run'; return; }
+  for (const artifact of state.artifacts) {
+    const el = document.createElement('div');
+    el.className = 'run-item';
+    const location = artifact.artifact_path || artifact.path || '';
+    const download = artifact.download_url || '#';
+    el.innerHTML = `<strong>${artifact.name || 'artifact'}</strong> (${artifact.format || ''})<br/>${location}<br/><a href="${download}" target="_blank" rel="noopener">Download</a>`;
+    root.appendChild(el);
+  }
+}
+
+async function refreshArtifacts() {
+  const root = document.getElementById('artifacts');
+  if (!state.selectedRun) { root.textContent = 'No run selected'; return; }
+  try {
+    const payload = await getJson(`/api/runs/${state.selectedRun}/artifacts`);
+    state.artifacts = payload.artifacts || [];
+    renderArtifacts();
+  } catch (err) {
+    root.textContent = String(err);
+  }
+}
+
 function renderTriggerForm() {
   const form = document.getElementById('triggerForm');
   form.innerHTML = '';
   const schema = (state.process || {}).trigger_schema || { fields: {} };
+  const parseListInput = (raw, itemKind) => {
+    const text = String(raw || '').trim();
+    if (!text) return [];
+    const normalized = text.replace(/,/g, ' ').trim();
+    const tokens = normalized.split(/\\s+/).filter(Boolean);
+    const out = [];
+    for (const token of tokens) {
+      const rangeMatch = token.match(/^(-?\\d+)-(-?\\d+)$/);
+      if (rangeMatch && (itemKind === 'number' || itemKind === 'integer')) {
+        let start = Number(rangeMatch[1]);
+        let end = Number(rangeMatch[2]);
+        if (!Number.isFinite(start) || !Number.isFinite(end)) throw new Error(`Invalid range '${token}'`);
+        const step = start <= end ? 1 : -1;
+        for (let n = start; step > 0 ? n <= end : n >= end; n += step) out.push(n);
+        continue;
+      }
+      if (itemKind === 'number' || itemKind === 'integer') {
+        const num = Number(token);
+        if (!Number.isFinite(num)) throw new Error(`Expected numeric list item, got '${token}'`);
+        out.push(itemKind === 'integer' ? Math.trunc(num) : num);
+      } else if (itemKind === 'bool') {
+        if (token !== 'true' && token !== 'false') throw new Error(`Expected bool list item, got '${token}'`);
+        out.push(token === 'true');
+      } else {
+        out.push(token);
+      }
+    }
+    return out;
+  };
   for (const [name, spec] of Object.entries(schema.fields || {})) {
     const row = document.createElement('div');
     row.className = 'form-row';
@@ -195,7 +255,12 @@ function renderTriggerForm() {
       input.innerHTML = ['<option value="">(select)</option>', ...spec.values.map((v) => `<option value="${v}">${v}</option>`)].join('');
     } else {
       input = document.createElement('input');
-      input.type = spec.kind === 'number' ? 'number' : 'text';
+      input.type = spec.kind === 'number' || spec.kind === 'integer' ? 'number' : 'text';
+      if (spec.kind === 'list') {
+        input.placeholder = spec.item === 'number' || spec.item === 'integer'
+          ? 'e.g. 1,2,3 or 1-3'
+          : 'comma or space separated values';
+      }
     }
     input.name = name;
     row.appendChild(input);
@@ -216,8 +281,9 @@ function renderTriggerForm() {
       const value = form.elements[name].value;
       if (value === '') continue;
       if (spec.kind === 'number') payload[name] = Number(value);
+      else if (spec.kind === 'integer') payload[name] = Math.trunc(Number(value));
       else if (spec.kind === 'bool') payload[name] = value === 'true';
-      else if (spec.kind === 'list') payload[name] = value.split(',').map((x) => x.trim()).filter(Boolean);
+      else if (spec.kind === 'list') payload[name] = parseListInput(value, spec.item || 'string');
       else payload[name] = value;
     }
     try {
@@ -240,6 +306,7 @@ async function refreshRuns() {
   renderRuns();
   if (!state.selectedRun && state.runs.length > 0) state.selectedRun = state.runs[0].run_id;
   await refreshEvents();
+  await refreshArtifacts();
 }
 
 async function bootstrap() {
@@ -277,6 +344,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_file(self, status: int, *, body: bytes, filename: str, content_type: str = "application/octet-stream") -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         self.end_headers()
         self.wfile.write(body)
 
@@ -346,6 +421,46 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     nodes = store.list_node_records(run_id)
                     self._send_json(200, {"run_id": run_id, "nodes": nodes})
                     return
+                if len(parts) == 4 and parts[3] == "artifacts":
+                    artifacts = store.list_run_artifacts(run_id)
+                    for item in artifacts:
+                        if not isinstance(item, dict):
+                            continue
+                        name = item.get("name")
+                        if isinstance(name, str) and name:
+                            item["download_url"] = f"/api/runs/{run_id}/artifacts/{name}/download"
+                        item["artifact_path"] = item.get("path")
+                    self._send_json(200, {"run_id": run_id, "artifacts": artifacts})
+                    return
+                if len(parts) == 6 and parts[3] == "artifacts" and parts[5] == "download":
+                    artifact_name = unquote(parts[4])
+                    artifacts = store.list_run_artifacts(run_id)
+                    selected: dict[str, Any] | None = None
+                    for item in artifacts:
+                        if not isinstance(item, dict):
+                            continue
+                        if item.get("name") == artifact_name:
+                            selected = item
+                            break
+                    if selected is None:
+                        self._send_json(404, {"error": f"Artifact '{artifact_name}' not found"})
+                        return
+                    raw_path = selected.get("path")
+                    if not isinstance(raw_path, str) or not raw_path:
+                        self._send_json(404, {"error": f"Artifact '{artifact_name}' has no path"})
+                        return
+                    artifact_path = Path(raw_path)
+                    run_dir = (self.config.state_dir / "runs" / run_id).resolve()
+                    resolved = artifact_path.resolve()
+                    if run_dir not in resolved.parents:
+                        self._send_json(403, {"error": "Artifact path is outside run directory"})
+                        return
+                    if not resolved.exists() or not resolved.is_file():
+                        self._send_json(404, {"error": f"Artifact file not found: {resolved}"})
+                        return
+                    body = resolved.read_bytes()
+                    self._send_file(200, body=body, filename=resolved.name)
+                    return
 
         self._send_json(404, {"error": "Not found"})
 
@@ -371,7 +486,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
 
         store = StateStore(self.config.state_dir)
-        run_id = Engine(process=process, state_store=store).trigger(payload)
+        try:
+            run_id = Engine(process=process, state_store=store).trigger(payload)
+        except Exception as exc:  # pragma: no cover - defensive API boundary
+            self._send_json(500, {"error": f"Trigger failed: {exc}"})
+            return
         self._send_json(200, {"run_id": run_id})
 
     def log_message(self, fmt, *args):  # noqa: A003

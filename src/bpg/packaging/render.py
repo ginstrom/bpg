@@ -45,6 +45,7 @@ def render_compose(spec: RuntimeSpec) -> str:
     bpg_service: dict = {
         **runtime_container,
         "env_file": [".env"],
+        "user": "${BPG_RUNTIME_UID:-1000}:${BPG_RUNTIME_GID:-1000}",
         "volumes": ["./process.bpg.yaml:/app/process.bpg.yaml:ro", "./state:/app/.bpg-state"],
         "command": ["run", spec.process_name],
     }
@@ -72,6 +73,7 @@ def render_compose(spec: RuntimeSpec) -> str:
         services["dashboard"] = {
             **runtime_container,
             "env_file": [".env"],
+            "user": "${BPG_RUNTIME_UID:-1000}:${BPG_RUNTIME_GID:-1000}",
             "environment": {
                 "BPG_STATE_DIR": "/app/.bpg-state",
                 "BPG_PROCESS_NAME": spec.process_name,

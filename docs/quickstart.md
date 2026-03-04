@@ -30,6 +30,24 @@ uv run bpg run triage-incoming-support-requests --input input.json --engine loca
 uv run bpg replay <run-id> --json
 ```
 
+## Artifacts and downloads
+If your process declares top-level `artifacts`, BPG materializes files at run completion.
+
+Default location:
+- `.bpg-state/runs/<run-id>/artifacts/`
+
+Inspect artifact events:
+```bash
+uv run bpg replay <run-id> --json
+```
+
+Dashboard flow:
+```bash
+uv run bpg up process.bpg.yaml --dashboard --force
+# open http://localhost:8080
+# run trigger input and use the Artifacts panel "Download" links
+```
+
 ## Common mistakes
 - Skipping `doctor` and debugging at runtime first.
 - Applying changes without checking `plan --explain` warnings.

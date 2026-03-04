@@ -257,6 +257,36 @@ def test_execution_log_is_append_only(tmp_path: Path):
     assert [e["node"] for e in events] == ["a", "b"]
 
 
+def test_save_run_artifact_jsonl_and_csv(tmp_path: Path):
+    store = StateStore(tmp_path)
+    store.create_run("run-art", "p", {})
+
+    jsonl_meta = store.save_run_artifact(
+        "run-art",
+        name="items",
+        payload=[{"row_id": 1, "summary": "a"}, {"row_id": 2, "summary": "b"}],
+        format="jsonl",
+    )
+    assert jsonl_meta["name"] == "items"
+    assert jsonl_meta["format"] == "jsonl"
+    jsonl_path = Path(jsonl_meta["path"])
+    assert jsonl_path.exists()
+    lines = jsonl_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 2
+
+    csv_meta = store.save_run_artifact(
+        "run-art",
+        name="items_csv",
+        payload=[{"row_id": 1, "summary": "a"}],
+        format="csv",
+    )
+    assert csv_meta["format"] == "csv"
+    csv_path = Path(csv_meta["path"])
+    assert csv_path.exists()
+    csv_text = csv_path.read_text(encoding="utf-8")
+    assert "row_id,summary" in csv_text
+
+
 def test_load_node_record_missing(tmp_path: Path):
     store = StateStore(tmp_path)
     store.create_run("run-nm", "p", {})

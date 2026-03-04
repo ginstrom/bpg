@@ -32,6 +32,8 @@ def build_runtime_bundle_files(process_text: str, spec: RuntimeSpec) -> dict[str
         "process.bpg.yaml": process_text,
         "README.md": render_readme(spec),
         "package-metadata.json": render_metadata(spec),
+        # Ensure bind-mount source exists for "./state:/app/.bpg-state".
+        "state/.gitkeep": "",
     }
     if spec.mode == "package" and spec.package_local_build:
         files.update(_package_runtime_source_files())

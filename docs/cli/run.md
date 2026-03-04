@@ -16,6 +16,8 @@ Use to execute deployed specs and compare backend behavior (`langgraph`, `local`
 ## Core idea
 Execution backend is pluggable; BPG semantics and audit events remain canonical.
 
+When a process declares `artifacts`, `bpg run` also materializes output files and appends `artifact_written` events with artifact locations.
+
 ## Example
 ```bash
 uv run bpg run support_flow --input input.json --engine langgraph

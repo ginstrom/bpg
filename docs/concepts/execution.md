@@ -16,6 +16,12 @@ Use this model when you need stable behavior across engine backends and auditabl
 ## Core idea
 BPG owns state transitions, eligibility, retries, and event schemas. Engines execute node work and report status.
 
+## Run outputs and artifacts
+- Final process output is persisted in run state (`run.yaml -> output`).
+- Node outputs are persisted per node (`runs/<run_id>/nodes/*.yaml`).
+- Declared process `artifacts` are written at completion under `runs/<run_id>/artifacts/` unless `artifacts[].path` overrides location.
+- Artifact writes emit `artifact_written` events with `artifact_path`, `format`, `sha256`, and `bytes`.
+
 ## Example
 ```bash
 uv run bpg run support_flow --input input.json --engine langgraph

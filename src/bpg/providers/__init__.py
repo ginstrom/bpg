@@ -40,7 +40,7 @@ from bpg.providers.base import (
 from bpg.providers.mock import MockProvider
 from bpg.providers.webhook import WebhookProvider
 from bpg.providers.slack_interactive import SlackInteractiveProvider
-from bpg.providers.core import PassthroughProvider
+from bpg.providers.core import DatasetSelectProvider, PassthroughProvider
 from bpg.providers.ai import (
     AiAnthropicProvider,
     AiGoogleProvider,
@@ -86,6 +86,7 @@ __all__ = [
     "AiOllamaProvider",
     "SlackInteractiveProvider",
     "AiLlmProvider",
+    "DatasetSelectProvider",
     "AgentPipelineProvider",
     "DashboardFormProvider",
     "MarkdownListProvider",
@@ -120,6 +121,7 @@ PROVIDER_REGISTRY: dict[str, type[Provider]] = {
     AiOllamaProvider.provider_id: AiOllamaProvider,
     AiLlmProvider.provider_id: AiLlmProvider,
     PassthroughProvider.provider_id: PassthroughProvider,
+    DatasetSelectProvider.provider_id: DatasetSelectProvider,
     AgentPipelineProvider.provider_id: AgentPipelineProvider,
     DashboardFormProvider.provider_id: DashboardFormProvider,
     HttpGitlabProvider.provider_id: HttpGitlabProvider,

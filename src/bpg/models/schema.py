@@ -313,6 +313,32 @@ class Policy(_ImmutableModel):
     escalation: Optional[List[Dict[Any, Any]]] = None
 
 
+class ArtifactFormat(str, Enum):
+    """Supported output artifact serialization formats."""
+
+    JSON = "json"
+    JSONL = "jsonl"
+    CSV = "csv"
+
+
+class ArtifactSpec(_ImmutableModel):
+    """Process-level output artifact declaration.
+
+    Example:
+        artifacts:
+          - name: enriched_items
+            from: enrich.out.items
+            format: jsonl
+    """
+
+    name: str
+    from_ref: str = Field(alias="from")
+    format: ArtifactFormat = Field(default=ArtifactFormat.JSON)
+    path: Optional[str] = None
+
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+
+
 # ---------------------------------------------------------------------------
 # Node execution status (§7)
 # ---------------------------------------------------------------------------
@@ -387,5 +413,9 @@ class Process(_ImmutableModel):
     output: Optional[str] = Field(
         default=None,
         description="Field reference for the process return value, e.g. 'gitlab.out.ticket_id'.",
+    )
+    artifacts: List[ArtifactSpec] = Field(
+        default_factory=list,
+        description="Optional declared output artifacts materialized at run completion.",
     )
     policy: Optional[Policy] = Field(default=None)

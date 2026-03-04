@@ -478,6 +478,7 @@ class TestProviderRegistry:
             "timer.delay",
             "queue.kafka",
             "core.passthrough",
+            "core.dataset.select_rows",
             "flow.loop",
             "flow.fanout",
             "flow.await_all",

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import threading
+import urllib.error
 import urllib.request
 from pathlib import Path
 
 from bpg.dashboard.server import DashboardConfig, create_server
+from bpg.state.store import StateStore
 
 
 def _write_process(tmp_path: Path) -> Path:
@@ -122,6 +124,90 @@ def test_dashboard_index_page_loads(tmp_path: Path):
         assert "Event Log" in html
         assert "join('\\n')" in html
         assert ".run-item.is-selected" in html
+        assert "e.g. 1,2,3 or 1-3" in html
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=1)
+
+
+def test_dashboard_trigger_returns_json_error_on_runtime_failure(tmp_path: Path, monkeypatch):
+    process_file = _write_process(tmp_path)
+    state_dir = tmp_path / ".bpg-state"
+    config = DashboardConfig(
+        state_dir=state_dir,
+        process_name="dash-proc",
+        process_file=process_file,
+    )
+    server = create_server(config=config, host="127.0.0.1", port=0)
+    host, port = server.server_address
+    base_url = f"http://{host}:{port}"
+
+    def _boom(self, payload):  # noqa: ANN001
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("bpg.runtime.engine.Engine.trigger", _boom)
+
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        data = json.dumps({"title": "x", "severity": "low"}).encode("utf-8")
+        req = urllib.request.Request(
+            f"{base_url}/api/trigger",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req):
+                pass
+            assert False, "expected HTTP 500 from /api/trigger"
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 500
+            body = json.loads(exc.read().decode("utf-8"))
+            assert "Trigger failed: boom" in body["error"]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=1)
+
+
+def test_dashboard_artifacts_list_and_download(tmp_path: Path):
+    process_file = _write_process(tmp_path)
+    state_dir = tmp_path / ".bpg-state"
+    store = StateStore(state_dir)
+    store.create_run("run-1", "dash-proc", {"title": "x", "severity": "low"})
+    store.update_run("run-1", {"status": "completed"})
+    store.save_run_artifact(
+        "run-1",
+        name="result",
+        payload={"ok": True},
+        format="json",
+    )
+
+    config = DashboardConfig(
+        state_dir=state_dir,
+        process_name="dash-proc",
+        process_file=process_file,
+    )
+    server = create_server(config=config, host="127.0.0.1", port=0)
+    host, port = server.server_address
+    base_url = f"http://{host}:{port}"
+
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        artifacts = _get_json(base_url, "/api/runs/run-1/artifacts")
+        assert artifacts["run_id"] == "run-1"
+        assert len(artifacts["artifacts"]) == 1
+        item = artifacts["artifacts"][0]
+        assert item["name"] == "result"
+        assert item["artifact_path"].endswith("result.json")
+        assert item["download_url"] == "/api/runs/run-1/artifacts/result/download"
+
+        with urllib.request.urlopen(f"{base_url}{item['download_url']}") as resp:
+            body = resp.read().decode("utf-8")
+            assert '"ok": true' in body
     finally:
         server.shutdown()
         server.server_close()

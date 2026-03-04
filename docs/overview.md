@@ -19,6 +19,7 @@ BPG treats process design as a structured interface:
 Process -> Nodes -> Edges -> Execution.
 
 BPG validates the graph, reports machine-actionable diagnostics, and runs the process with stable semantics.
+It persists run outputs/events and can materialize declared output artifacts (`json`, `jsonl`, `csv`) for downstream systems.
 
 ## Example
 ```yaml

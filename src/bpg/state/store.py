@@ -25,6 +25,7 @@ import hashlib
 import json
 import re
 import shutil
+import csv
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -482,6 +483,81 @@ class StateStore:
         except Exception as e:
             raise StateStoreError(f"Failed to append execution event for run {run_id}: {e}")
 
+    def save_run_artifact(
+        self,
+        run_id: str,
+        *,
+        name: str,
+        payload: Any,
+        format: str = "json",
+        explicit_path: Optional[Path] = None,
+    ) -> Dict[str, Any]:
+        """Persist a run output artifact and return artifact metadata."""
+        run_dir = self._runs_dir / run_id
+        if not run_dir.exists():
+            raise StateStoreError(f"Run {run_id} does not exist")
+
+        fmt = str(format).strip().lower()
+        if fmt not in {"json", "jsonl", "csv"}:
+            raise StateStoreError(f"Unsupported artifact format: {format!r}")
+
+        safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("._") or "artifact"
+        target = explicit_path or (run_dir / "artifacts" / f"{safe_name}.{fmt}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            if fmt == "json":
+                target.write_text(
+                    json.dumps(payload, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+            elif fmt == "jsonl":
+                if isinstance(payload, list):
+                    lines = []
+                    for item in payload:
+                        lines.append(json.dumps(item, sort_keys=True))
+                    target.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+                else:
+                    target.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+            else:  # csv
+                if not isinstance(payload, list):
+                    raise StateStoreError("CSV artifact payload must be a list of objects")
+                rows: list[dict[str, Any]] = []
+                for item in payload:
+                    if isinstance(item, dict):
+                        rows.append(item)
+                    else:
+                        raise StateStoreError("CSV artifact payload must be a list of objects")
+                headers: list[str] = []
+                seen: set[str] = set()
+                for row in rows:
+                    for key in row.keys():
+                        if key not in seen:
+                            headers.append(str(key))
+                            seen.add(str(key))
+                with target.open("w", newline="", encoding="utf-8") as f:
+                    writer = csv.DictWriter(f, fieldnames=headers)
+                    writer.writeheader()
+                    for row in rows:
+                        writer.writerow({h: row.get(h) for h in headers})
+        except StateStoreError:
+            raise
+        except Exception as e:
+            raise StateStoreError(f"Failed to save artifact {name!r} for run {run_id}: {e}")
+
+        try:
+            data = target.read_bytes()
+        except Exception as e:
+            raise StateStoreError(f"Failed to read artifact {name!r} for checksum: {e}")
+        checksum = hashlib.sha256(data).hexdigest()
+        return {
+            "name": name,
+            "format": fmt,
+            "path": str(target),
+            "bytes": len(data),
+            "sha256": checksum,
+        }
+
     def load_execution_log(self, run_id: str) -> list[Dict[str, Any]]:
         """Load append-only execution events for a run in write order."""
         events_path = self._runs_dir / run_id / "events.jsonl"
@@ -498,6 +574,42 @@ class StateStore:
             return out
         except Exception as e:
             raise StateStoreError(f"Failed to load execution log for run {run_id}: {e}")
+
+    def list_run_artifacts(self, run_id: str) -> list[Dict[str, Any]]:
+        """Return artifact metadata for a run from run record and filesystem."""
+        run = self.load_run(run_id)
+        if run is None:
+            raise StateStoreError(f"Run {run_id} not found")
+
+        artifacts: list[Dict[str, Any]] = []
+        run_artifacts = run.get("artifacts")
+        if isinstance(run_artifacts, list):
+            for item in run_artifacts:
+                if isinstance(item, dict):
+                    artifacts.append(dict(item))
+
+        artifact_dir = self._runs_dir / run_id / "artifacts"
+        if artifact_dir.exists():
+            existing_paths = {str(a.get("path")) for a in artifacts}
+            for p in sorted(artifact_dir.glob("*")):
+                if not p.is_file():
+                    continue
+                if str(p) in existing_paths:
+                    continue
+                try:
+                    data = p.read_bytes()
+                except Exception:
+                    data = b""
+                artifacts.append(
+                    {
+                        "name": p.stem,
+                        "format": p.suffix.lstrip("."),
+                        "path": str(p),
+                        "bytes": len(data),
+                        "sha256": hashlib.sha256(data).hexdigest() if data else "",
+                    }
+                )
+        return artifacts
 
     def load_node_record(self, run_id: str, node_name: str) -> Optional[Dict[str, Any]]:
         """Load a single node execution record.

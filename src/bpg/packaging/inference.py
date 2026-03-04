@@ -59,6 +59,9 @@ def build_runtime_spec(
     ledger_backend = infer_ledger_backend(process, mode=mode)
 
     defaults: dict[str, str] = {"BPG_LEDGER_BACKEND": ledger_backend}
+    # Make bind-mounted state files writable by the host user by default.
+    defaults["BPG_RUNTIME_UID"] = str(os.getuid())
+    defaults["BPG_RUNTIME_GID"] = str(os.getgid())
     if ledger_backend == "postgres":
         defaults.update(
             {
@@ -119,6 +122,8 @@ def build_runtime_spec(
 
     # Core runtime env tied to selected ledger backend.
     _add_env("BPG_LEDGER_BACKEND", True, "runtime")
+    _add_env("BPG_RUNTIME_UID", False, "runtime")
+    _add_env("BPG_RUNTIME_GID", False, "runtime")
     if ledger_backend == "postgres":
         _add_env("POSTGRES_DB", True, "postgres")
         _add_env("POSTGRES_USER", True, "postgres")

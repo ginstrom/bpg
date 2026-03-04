@@ -19,6 +19,7 @@ EVENT_TYPES: frozenset[str] = frozenset(
         "edge_fired",
         "human_requested",
         "human_received",
+        "artifact_written",
         "run_completed",
         "run_failed",
     }

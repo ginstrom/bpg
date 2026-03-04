@@ -61,6 +61,9 @@ def test_render_compose_uses_local_runtime_image_in_local_mode():
     )
     compose = render_compose(spec)
     assert "bpg-local:dev" in compose
+    assert "user:" in compose
+    assert "BPG_RUNTIME_UID" in compose
+    assert "BPG_RUNTIME_GID" in compose
     assert "run" in compose
     assert "p1" in compose
 
@@ -80,3 +83,4 @@ def test_render_compose_builds_locally_in_package_mode_by_default():
     assert "build:" in compose
     assert "context: ." in compose
     assert "dockerfile: Dockerfile" in compose
+    assert "user:" in compose

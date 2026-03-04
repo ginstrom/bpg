@@ -200,6 +200,7 @@ Providers are pluggable execution backends responsible for carrying out work on 
 | `ai.ollama` | AI/Automation | Structured-output LLM provider backed by local Ollama |
 | `ai.llm` | AI/Automation | Compatibility alias for `ai.anthropic` |
 | `agent.pipeline` | AI/Automation | Invokes an AI agent pipeline |
+| `core.dataset.select_rows` | Data | Selects typed rows from an inline dataset by `row_ids` |
 | `slack.interactive` | Human | Posts interactive messages to Slack |
 | `dashboard.form` | Human | Renders a web form for structured input |
 | `http.webhook` | Integration | Sends/receives HTTP callbacks |
@@ -250,6 +251,7 @@ A process file MUST contain:
 A process file MAY contain:
 
 - `output`
+- `artifacts`
 - `metadata`
 - `policy`
 
@@ -492,6 +494,7 @@ Each process run has:
 - A unique, globally unique `run_id`
 - An immutable, append-only execution log
 - A per-node execution record (status, input, output, timestamps, idempotency key)
+- Optional output artifacts under `.bpg-state/runs/<run_id>/artifacts/` with `artifact_written` events containing artifact location/checksum metadata
 
 #### Node Execution Semantics
 

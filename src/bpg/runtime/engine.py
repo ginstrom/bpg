@@ -17,9 +17,11 @@ Idempotency (§8):
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict
 
 from bpg.models.schema import Process
+from bpg.runtime.expr import resolve_mapping
 from bpg.runtime.backends import get_backend
 from bpg.runtime.events import normalize_event
 
@@ -175,7 +177,28 @@ class Engine:
         }
         if "process_output" in final_state:
             updates["output"] = final_state["process_output"]
+        artifact_records = self._materialize_artifacts(run_id=run_id, final_state=final_state)
+        if artifact_records:
+            updates["artifacts"] = artifact_records
         self._state_store.update_run(run_id, updates)
+        for artifact in artifact_records:
+            self._state_store.append_execution_event(
+                run_id,
+                normalize_event(
+                    {
+                        "event_type": "artifact_written",
+                        "run_id": run_id,
+                        "process_name": (
+                            self._process.metadata.name if self._process.metadata else "default"
+                        ),
+                        "status": run_status,
+                        **artifact,
+                        "artifact_path": artifact.get("path"),
+                        "artifact_location": artifact.get("path"),
+                    },
+                    run_id=run_id,
+                ),
+            )
         self._state_store.append_execution_event(
             run_id,
             normalize_event(
@@ -209,3 +232,48 @@ class Engine:
         """
         from bpg.providers.base import compute_idempotency_key
         return compute_idempotency_key(run_id, node_name, input_payload)
+
+    def _materialize_artifacts(self, run_id: str, final_state: Dict[str, Any]) -> list[Dict[str, Any]]:
+        records: list[Dict[str, Any]] = []
+        if not self._process.artifacts:
+            return records
+        process_name = self._process.metadata.name if self._process.metadata else "default"
+        process_output = final_state.get("process_output")
+        for spec in self._process.artifacts:
+            if spec.from_ref == "output":
+                value = process_output
+            else:
+                try:
+                    value = resolve_mapping(
+                        {"__artifact__": spec.from_ref},
+                        final_state,
+                        self._process.trigger,
+                    )["__artifact__"]
+                except Exception as exc:
+                    raise EngineError(
+                        f"Failed to resolve artifact '{spec.name}' source {spec.from_ref!r}: {exc}"
+                    ) from exc
+
+            explicit_path: Path | None = None
+            if spec.path:
+                template = (
+                    spec.path.replace("{{run_id}}", run_id)
+                    .replace("{{process_name}}", process_name)
+                    .replace("{{artifact_name}}", spec.name)
+                )
+                if template.startswith("file://"):
+                    explicit_path = Path(template[len("file://"):])
+                elif template.startswith("file:"):
+                    explicit_path = Path(template[len("file:"):])
+                else:
+                    explicit_path = Path(template)
+
+            artifact = self._state_store.save_run_artifact(
+                run_id,
+                name=spec.name,
+                payload=value,
+                format=spec.format.value,
+                explicit_path=explicit_path,
+            )
+            records.append(artifact)
+        return records
