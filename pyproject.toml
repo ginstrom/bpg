@@ -30,3 +30,8 @@ build-backend = "uv_build"
 dev = [
     "pytest-cov>=7.0.0",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "system_integration: tests that call real external production systems",
+]

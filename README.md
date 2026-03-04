@@ -118,6 +118,7 @@ See [LICENSE](LICENSE), [LICENSE-APACHE](LICENSE-APACHE), and [NOTICE](NOTICE).
   - [Modify Process](docs/guides/modify_process.md)
   - [Debug Validation Errors](docs/guides/debug_validation_errors.md)
   - [Testing Processes](docs/guides/testing_processes.md)
+  - [System Integration Tests](docs/guides/system_integration_tests.md)
 - Reference:
   - [Process Schema](docs/reference/process_schema.md)
   - [Node Schema](docs/reference/node_schema.md)
