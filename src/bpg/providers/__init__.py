@@ -41,6 +41,13 @@ from bpg.providers.mock import MockProvider
 from bpg.providers.webhook import WebhookProvider
 from bpg.providers.slack_interactive import SlackInteractiveProvider
 from bpg.providers.core import PassthroughProvider
+from bpg.providers.ai import (
+    AiAnthropicProvider,
+    AiGoogleProvider,
+    AiLlmProvider,
+    AiOllamaProvider,
+    AiOpenAIProvider,
+)
 from bpg.providers.builtin import (
     AgentPipelineProvider,
     BpgProcessCallProvider,
@@ -73,7 +80,12 @@ __all__ = [
     "compute_idempotency_key",
     "MockProvider",
     "WebhookProvider",
+    "AiAnthropicProvider",
+    "AiOpenAIProvider",
+    "AiGoogleProvider",
+    "AiOllamaProvider",
     "SlackInteractiveProvider",
+    "AiLlmProvider",
     "AgentPipelineProvider",
     "DashboardFormProvider",
     "MarkdownListProvider",
@@ -102,6 +114,11 @@ PROVIDER_REGISTRY: dict[str, type[Provider]] = {
     MockProvider.provider_id: MockProvider,
     WebhookProvider.provider_id: WebhookProvider,
     SlackInteractiveProvider.provider_id: SlackInteractiveProvider,
+    AiAnthropicProvider.provider_id: AiAnthropicProvider,
+    AiOpenAIProvider.provider_id: AiOpenAIProvider,
+    AiGoogleProvider.provider_id: AiGoogleProvider,
+    AiOllamaProvider.provider_id: AiOllamaProvider,
+    AiLlmProvider.provider_id: AiLlmProvider,
     PassthroughProvider.provider_id: PassthroughProvider,
     AgentPipelineProvider.provider_id: AgentPipelineProvider,
     DashboardFormProvider.provider_id: DashboardFormProvider,
