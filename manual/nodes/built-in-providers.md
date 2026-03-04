@@ -21,6 +21,11 @@ This catalog documents provider IDs currently registered in `PROVIDER_REGISTRY`.
 
 | Provider ID | Purpose | Key Input Expectations | Key Config | Packaging Hints |
 |---|---|---|---|---|
+| `ai.anthropic` | Structured JSON output via Anthropic messages API. | object/string input normalized to prompt text. | required `model`; optional `system_prompt`, `prompt_template`, `context_fields`, `output_schema`, `temperature`, `max_tokens`, `api_key_env`, `base_url`, `dry_run`. | live: required `ANTHROPIC_API_KEY` (or `api_key_env` override) |
+| `ai.openai` | Structured JSON output via OpenAI responses API. | object/string input normalized to prompt text. | required `model`; optional `system_prompt`, `prompt_template`, `context_fields`, `output_schema`, `temperature`, `max_tokens`, `api_key_env`, `base_url`, `dry_run`. | live: required `OPENAI_API_KEY` (or `api_key_env` override) |
+| `ai.google` | Structured JSON output via Google Gemini generateContent API. | object/string input normalized to prompt text. | required `model`; optional `system_prompt`, `prompt_template`, `context_fields`, `output_schema`, `temperature`, `max_tokens`, `api_key_env`, `base_url`, `dry_run`. | live: required `GOOGLE_API_KEY` (or `api_key_env` override) |
+| `ai.ollama` | Structured JSON output via local Ollama generate API. | object/string input normalized to prompt text. | required `model`; optional `system_prompt`, `prompt_template`, `context_fields`, `output_schema`, `temperature`, `max_tokens`, `base_url`, `dry_run`. | no required env by default |
+| `ai.llm` | Compatibility alias for Anthropic-backed AI provider. | same as `ai.anthropic`. | same as `ai.anthropic`. | same as `ai.anthropic` |
 | `agent.pipeline` | Baseline AI-style triage output generation. | often `title`, `severity`, optional `labels`. | optional `mock_output` override object. | none |
 | `http.gitlab` | Deterministic GitLab issue metadata output for local workflows. | optional `labels`. | optional `ticket_prefix`, `ticket_id`, `issue_url`. | required: `GITLAB_TOKEN`; optional: `GITLAB_BASE_URL` |
 | `queue.kafka` | Simulated publish metadata for Kafka-like flows. | `topic` in input or config. | optional `topic`, `partition`, `offset`. | none |
@@ -59,4 +64,4 @@ Dry-run toggles:
 
 ## 6. Built-in Provider IDs (quick list)
 
-`mock`, `http.webhook`, `core.passthrough`, `agent.pipeline`, `dashboard.form`, `slack.interactive`, `http.gitlab`, `queue.kafka`, `timer.delay`, `flow.loop`, `flow.fanout`, `flow.await_all`, `bpg.process_call`, `text.parse_numbers`, `math.sum_numbers`, `fs.markdown_list`, `text.markdown_chunk`, `embed.text`, `weaviate.upsert`, `weaviate.hybrid_search`, `tool.web_search`, `notify.email`
+`mock`, `http.webhook`, `core.passthrough`, `ai.anthropic`, `ai.openai`, `ai.google`, `ai.ollama`, `ai.llm`, `agent.pipeline`, `dashboard.form`, `slack.interactive`, `http.gitlab`, `queue.kafka`, `timer.delay`, `flow.loop`, `flow.fanout`, `flow.await_all`, `bpg.process_call`, `text.parse_numbers`, `math.sum_numbers`, `fs.markdown_list`, `text.markdown_chunk`, `embed.text`, `weaviate.upsert`, `weaviate.hybrid_search`, `tool.web_search`, `notify.email`

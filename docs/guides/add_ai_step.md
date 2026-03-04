@@ -22,14 +22,23 @@ node_types:
   classify@v1:
     in: DocIn
     out: ClassifyOut
-    provider: mock
+    provider: ai.openai
     version: v1
-    config_schema: {}
+    config_schema:
+      model: string
+      output_schema: object
 
 nodes:
   classify:
     type: classify@v1
-    config: {}
+    config:
+      model: gpt-4.1-mini
+      output_schema:
+        type: object
+        required: [label]
+        properties:
+          label:
+            type: string
 
 edges:
   - from: input
@@ -37,6 +46,9 @@ edges:
     with:
       text: input.out.text
 ```
+
+Preferred provider IDs: `ai.anthropic`, `ai.openai`, `ai.google`, `ai.ollama`.
+Compatibility note: `ai.llm` remains available as a compatibility alias to `ai.anthropic`.
 
 ## Common mistakes
 - Leaving AI outputs untyped or too loose for downstream use.

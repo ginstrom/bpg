@@ -194,6 +194,11 @@ Providers are pluggable execution backends responsible for carrying out work on 
 
 | Provider ID | Category | Description |
 |---|---|---|
+| `ai.anthropic` | AI/Automation | Structured-output LLM provider backed by Anthropic |
+| `ai.openai` | AI/Automation | Structured-output LLM provider backed by OpenAI |
+| `ai.google` | AI/Automation | Structured-output LLM provider backed by Google Gemini API |
+| `ai.ollama` | AI/Automation | Structured-output LLM provider backed by local Ollama |
+| `ai.llm` | AI/Automation | Compatibility alias for `ai.anthropic` |
 | `agent.pipeline` | AI/Automation | Invokes an AI agent pipeline |
 | `slack.interactive` | Human | Posts interactive messages to Slack |
 | `dashboard.form` | Human | Renders a web form for structured input |
