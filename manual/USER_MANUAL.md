@@ -6,7 +6,7 @@ BPG (Business Process Graph) lets you define typed workflow graphs in YAML, prev
 ## Documentation Map
 - Node authoring and built-ins: [nodes/README.md](nodes/README.md)
 - Search ingestion/retrieval pattern: [nodes/search-pattern.md](nodes/search-pattern.md)
-- Full system spec: [../docs/bpg-spec.md](../docs/bpg-spec.md)
+- Canonical docs entrypoint: [../docs/overview.md](../docs/overview.md)
 
 ## Prerequisites
 - Python 3.12+

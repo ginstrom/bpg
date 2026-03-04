@@ -3,8 +3,6 @@
 These models reflect the BPG specification (v0.2) and are used throughout the
 compiler, runtime, and state layers.  All models are immutable by default to
 enforce the spec's "types are immutable once published" guarantee.
-
-Reference: docs/bpg-spec.md
 """
 
 from __future__ import annotations
