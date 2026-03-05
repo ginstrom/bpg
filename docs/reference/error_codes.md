@@ -16,6 +16,22 @@ Use this page when building repair loops for agents and CI diagnostics.
 ## Core idea
 Treat diagnostics as data. Parse and repair deterministically.
 
+## Error Code Categories
+
+### Core Codes
+- `E_PARSE`: Structural YAML parsing or BPG schema violation.
+- `E_VALIDATION`: Semantic validation failure (default).
+- `E_TYPES_REQUIRED`: Process missing mandatory `types` section.
+- `E_UNKNOWN`: Unhandled internal exception caught at CLI boundary.
+
+### Expression Codes (`when` conditions)
+- `E_EXPR_EMPTY`: Expression is empty or contains only whitespace.
+- `E_EXPR_TOKEN_UNEXPECTED_CHAR`: Invalid character in expression.
+- `E_EXPR_EXPECTED_TOKEN`: Parser expected a specific token kind (e.g. `)`).
+- `E_EXPR_UNEXPECTED_TOKEN`: Parser encountered a token in an invalid position.
+- `E_EXPR_UNEXPECTED_END`: Expression ended prematurely (e.g. trailing `&&`).
+- `E_EXPR_UNKNOWN_FUNCTION`: Reference to a function not in the allowed list (`is_null`, `is_present`).
+
 ## Example
 ```json
 {

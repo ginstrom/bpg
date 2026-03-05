@@ -25,7 +25,22 @@ edges:
     with:
       customer_id: extract.out.customer_id
       payload: extract.out.payload
+    timeout: 30s
+    on_failure:
+      action: route
+      to: alert_operator
 ```
+
+## Edge Properties
+- `from`: Source node name.
+- `to`: Target node name.
+- `when`: Boolean condition expression.
+- `with`: Data mapping from source to target.
+- `timeout`: Per-edge timeout override.
+- `on_failure`: Failure routing configuration.
+  - `action`: `route`, `notify`, or `fail`.
+  - `to`: Target node for `route` action.
+  - `node`: Notification node for `notify` action.
 
 ## Common mistakes
 - Missing required target fields in `with`.

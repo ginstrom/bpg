@@ -1,4 +1,4 @@
-# Type System Reference
+## Type System Reference
 
 ```yaml
 doc_metadata:
@@ -10,22 +10,31 @@ doc_metadata:
 ## Summary
 BPG type definitions are named mappings consumed by node contracts and validated at compile time.
 
-## When to use
-Use while designing node boundaries and edge mappings.
+## Primitive Types
+- `string`: UTF-8 text.
+- `number`: Floating point or integer.
+- `bool`: `true` or `false`.
+- `duration`: Time interval (e.g., `5s`, `2h`).
+- `datetime`: ISO 8601 timestamp.
+- `object`: Opaque dictionary (escape hatch for unstructured data).
 
-## Core idea
-Strong typing turns ambiguous runtime failures into early actionable diagnostics.
+## Complex Types
+- `enum(A,B,C)`: Restricted set of string values.
+- `list<T>`: Array of elements of type `T`.
+- `T?`: Optional field (can be null or omitted).
 
 ## Example
 ```yaml
 types:
   InputDoc:
     text: string
-    locale: string?
+    tags: list<string>?
+    priority: number
 
   Classification:
     label: enum(invoice,support,legal)
     confidence: number
+    received_at: datetime
 ```
 
 ## Common mistakes

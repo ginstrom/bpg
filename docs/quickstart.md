@@ -56,4 +56,10 @@ uv run bpg up process.bpg.yaml --dashboard --force
 ## Related pages
 - [Build Process Guide](guides/build_process.md)
 - [Debug Validation Errors](guides/debug_validation_errors.md)
-- [Doctor CLI Reference](cli/doctor.md)
+- [CLI: bpg init](cli/init.md)
+- [CLI: bpg doctor](cli/doctor.md)
+- [CLI: bpg plan](cli/plan.md)
+- [CLI: bpg apply](cli/apply.md)
+- [CLI: bpg run](cli/run.md)
+- [CLI: bpg replay](cli/replay.md)
+- [CLI: bpg up](cli/up.md)

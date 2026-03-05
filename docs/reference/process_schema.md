@@ -26,6 +26,7 @@ Keep one canonical YAML shape. Avoid equivalent alternate representations.
     "imports": {"type": "array", "items": {"type": "string"}},
     "types": {"type": "object"},
     "node_types": {"type": "object"},
+    "modules": {"type": "object"},
     "nodes": {"type": "object"},
     "trigger": {"type": "string"},
     "edges": {"type": "array"},
