@@ -518,7 +518,8 @@ def run_dashboard_server() -> None:
         process_file=process_file,
     )
     server = create_server(config=config, host=host, port=port)
-    print(f"BPG dashboard listening on http://{host}:{port}")
+    browser_host = "localhost" if host in {"0.0.0.0", "::"} else host
+    print(f"BPG dashboard listening on http://{browser_host}:{port} (bind={host})")
     server.serve_forever()
 
 

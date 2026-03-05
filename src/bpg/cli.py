@@ -1184,10 +1184,10 @@ def up(
             err_console.print(result.stderr.strip() or result.stdout.strip() or "docker compose up failed")
             raise typer.Exit(code=1)
         console.print(f"[bold green]✓[/bold green] Local runtime up: [cyan]{out_dir}[/cyan]")
-        if dashboard:
+        if spec.dashboard_enabled:
             console.print(
                 "[bold green]✓[/bold green] Dashboard: "
-                f"[cyan]http://localhost:{dashboard_port}[/cyan]"
+                f"[cyan]http://localhost:{spec.dashboard_port}[/cyan]"
             )
     except (ParseError, ValidationError) as e:
         err_console.print(f"Error: {e}")

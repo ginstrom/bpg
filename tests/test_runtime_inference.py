@@ -114,3 +114,42 @@ edges: []
     assert spec.runtime_image == "bpg-local:dev"
     env_by_name = {item.name: item for item in spec.env_vars}
     assert env_by_name["DASHBOARD_PORT"].value == "9090"
+
+
+def test_build_runtime_spec_auto_enables_dashboard_for_dashboard_provider(tmp_path: Path):
+    process_file = _write_process(
+        tmp_path,
+        """
+metadata:
+  name: p1
+  version: 1.0.0
+types:
+  TriggerIn:
+    query: string
+node_types:
+  n@v1:
+    in: TriggerIn
+    out: TriggerIn
+    provider: dashboard.form
+    version: v1
+    config_schema: {}
+nodes:
+  n1:
+    type: n@v1
+    config: {}
+trigger: n1
+edges: []
+""",
+    )
+    process = parse_process_file(process_file)
+    spec = build_runtime_spec(
+        process,
+        process_file.read_text(),
+        mode="package",
+        env={},
+        dashboard=False,
+    )
+    assert spec.dashboard_enabled is True
+    assert "dashboard" in spec.services
+    env_by_name = {item.name: item for item in spec.env_vars}
+    assert env_by_name["DASHBOARD_PORT"].value == "8080"
