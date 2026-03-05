@@ -10,6 +10,14 @@ Rows are read from `imdb_first10.csv` at runtime via `core.csv.read`.
 - `imdb_first10.csv`: source sample data (header + first 10 rows)
 - `input.yaml`: run payload (`row_ids` list)
 
+## Graph
+
+```mermaid
+flowchart TD
+  ingest["ingest<br/>core.passthrough"] --> read_csv["read_csv<br/>core.csv.read"]
+  read_csv --> enrich["enrich<br/>ai.google (gemini-2.5-flash-lite)"]
+```
+
 ## Required env var
 
 The AI node reads the API key from `GOOGLE_API_KEY` (`api_key_env: GOOGLE_API_KEY` in node config).

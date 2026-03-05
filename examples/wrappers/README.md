@@ -7,6 +7,13 @@ These examples demonstrate node wrappers that run in dry-run mode, locally, and 
 - Process: `examples/wrappers/parse-sum-email/process.bpg.yaml`
 - Input: `examples/wrappers/parse-sum-email/input.yaml`
 
+```mermaid
+flowchart TD
+  ingest["ingest<br/>core.passthrough"] --> parse["parse<br/>text.parse_numbers"]
+  parse --> sum["sum<br/>math.sum_numbers"]
+  sum --> email["email<br/>notify.email (dry_run)"]
+```
+
 Local (no package):
 
 ```bash
@@ -28,6 +35,12 @@ uv run bpg down --local-dir .bpg/local/sample-parse-sum-email
 
 - Process: `examples/wrappers/search-email/process.bpg.yaml`
 - Input: `examples/wrappers/search-email/input.yaml`
+
+```mermaid
+flowchart TD
+  ingest2["ingest<br/>core.passthrough"] --> search["search<br/>tool.web_search (dry_run)"]
+  search --> email2["email<br/>notify.email (dry_run)"]
+```
 
 Local (no package):
 

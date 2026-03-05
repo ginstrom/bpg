@@ -14,6 +14,26 @@ These examples run with built-in providers:
 - `weaviate.upsert`
 - `weaviate.hybrid_search`
 
+## Graphs
+
+### Ingest (`ingest.bpg.yaml`)
+
+```mermaid
+flowchart TD
+  ingest_input["ingest_input<br/>dashboard.form"] --> list_markdown["list_markdown<br/>fs.markdown_list"]
+  list_markdown --> chunk_markdown["chunk_markdown<br/>text.markdown_chunk"]
+  chunk_markdown --> embed_chunks["embed_chunks<br/>embed.text"]
+  embed_chunks --> write_weaviate["write_weaviate<br/>weaviate.upsert"]
+```
+
+### Retrieve (`retrieve.bpg.yaml`)
+
+```mermaid
+flowchart TD
+  query_input["query_input<br/>dashboard.form"] --> embed_query["embed_query<br/>embed.text"]
+  embed_query --> search["search<br/>weaviate.hybrid_search"]
+```
+
 ## Quick Run
 
 From repo root:
