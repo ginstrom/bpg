@@ -31,17 +31,12 @@ class EngineError(Exception):
 
 
 class Engine:
-    """Event-driven execution engine for a single BPG process.
+    """Orchestrates the lifecycle of a single BPG process run.
 
-    Usage (once implemented)::
-
-        engine = Engine(process=process, state_store=store)
-        run_id = engine.trigger(input_payload={"title": "Login broken", ...})
-        engine.await_run(run_id)
-
-    Args:
-        process: The compiled and validated ``Process`` definition.
-        state_store: A ``StateStore`` instance for persisting run records.
+    The engine manages the state transition from 'running' to a terminal status
+    by delegating execution to a pluggable backend (e.g. LangGraph). It ensures
+    atomic run creation, event-sourced audit logging, and post-run artifact
+    materialization.
     """
 
     def __init__(self, process: Process, state_store: Any, backend: str = "langgraph") -> None:

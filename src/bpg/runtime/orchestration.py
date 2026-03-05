@@ -25,6 +25,11 @@ def _package_runtime_source_files() -> dict[str, str]:
 
 
 def build_runtime_bundle_files(process_text: str, spec: RuntimeSpec) -> dict[str, str]:
+    """Materialize a set of files forming a portable Docker Compose environment.
+
+    Includes the process spec, .env templates, metadata, and optional source 
+    files for local-build mode (package-level isolation).
+    """
     files = {
         "docker-compose.yml": render_compose(spec),
         ".env.example": render_env_example(spec.env_vars),

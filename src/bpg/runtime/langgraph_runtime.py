@@ -169,12 +169,18 @@ def _compute_retry_delay(
 
 
 class LangGraphRuntime:
-    """Execute a BPG process using LangGraph as the orchestration engine.
+    """Executes BPG processes via a linear LangGraph topological chain.
+
+    To support BPG's flexible conditional branching within LangGraph's 
+    static graph structure, the runtime constructs a linear chain of all nodes 
+    in topological order. Each node function internally evaluates its own 
+    activation eligibility based on the accumulated process state and 
+    incoming edge 'when' conditions.
 
     Args:
         ir: Compiled and validated :class:`ExecutionIR` for the process.
         providers: Dict mapping provider identifier strings to
-            :class:`Provider` instances (e.g. ``{"agent.pipeline": my_agent}``).
+            :class:`Provider` instances.
         checkpointer: Optional LangGraph checkpointer (e.g. ``MemorySaver``
             or ``SqliteSaver``) for state persistence and resumability.
     """

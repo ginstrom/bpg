@@ -13,6 +13,7 @@ from bpg.packaging.spec import EnvVarSpec
 
 
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?[-?]).*?)?\}")
+_DASHBOARD_PROVIDER_ID = "dashboard.form"
 
 
 def _extract_env_refs(value: Any) -> list[tuple[str, bool]]:
@@ -51,12 +52,22 @@ def build_runtime_spec(
     dashboard_port: int = 8080,
     image: str | None = None,
 ) -> RuntimeSpec:
+    """Infer required services and env vars to build a portable runtime specification.
+
+    Handles default ledger selection (postgres for packages, sqlite for local),
+    UID/GID mapping for host-mounted volumes, and mandatory service inclusion.
+    """
     env_map = dict(os.environ)
     if env:
         env_map.update(env)
 
     services: set[str] = set()
     ledger_backend = infer_ledger_backend(process, mode=mode)
+    has_dashboard_provider = any(
+        process.node_types[node.node_type].provider == _DASHBOARD_PROVIDER_ID
+        for node in process.nodes.values()
+    )
+    dashboard_enabled = dashboard or has_dashboard_provider
 
     defaults: dict[str, str] = {"BPG_LEDGER_BACKEND": ledger_backend}
     # Make bind-mounted state files writable by the host user by default.
@@ -78,7 +89,7 @@ def build_runtime_spec(
 
     if ledger_backend == "postgres":
         services.add("postgres")
-    if dashboard:
+    if dashboard_enabled:
         services.add("dashboard")
 
     env_entries: dict[str, EnvVarSpec] = {}
@@ -131,7 +142,7 @@ def build_runtime_spec(
         _add_env("BPG_LEDGER_DSN", True, "runtime")
     else:
         _add_env("BPG_LEDGER_PATH", True, "runtime")
-    if dashboard:
+    if dashboard_enabled:
         env_map.setdefault("DASHBOARD_PORT", str(dashboard_port))
         _add_env("DASHBOARD_PORT", True, "dashboard")
 
@@ -155,7 +166,7 @@ def build_runtime_spec(
         ledger_backend=ledger_backend,
         runtime_image=runtime_image,
         package_local_build=package_local_build,
-        dashboard_enabled=dashboard,
+        dashboard_enabled=dashboard_enabled,
         dashboard_port=dashboard_port,
         services=sorted(services),
         env_vars=sorted(env_entries.values(), key=lambda item: item.name),

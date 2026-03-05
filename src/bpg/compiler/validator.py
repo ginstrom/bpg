@@ -437,8 +437,8 @@ def validate_graph_structure(
 ) -> Dict[str, ResolvedNode]:
     """Validate a set of nodes and edges (either for a process or a module).
 
-    Returns:
-        Mapping from node name to its resolved structure.
+    Operates as a unified validation engine for both the top-level process graph
+    and encapsulated module graphs.
     """
 
     def _resolve_type(type_name: str) -> ResolvedTypeDef:
@@ -549,7 +549,9 @@ def validate_graph_structure(
         if edge.when:
             _parse_when(edge.when, src, tgt, edge_index=edge_idx)
 
-    # Required input coverage per target across all incoming edges
+    # Required input coverage per target across all incoming edges.
+    # BPG semantics: target input requirements are satisfied by the union
+    # of all incoming edge mappings (multi-edge merge).
     incoming_by_target: Dict[str, List[Edge]] = {}
     for edge in edges:
         incoming_by_target.setdefault(edge.target, []).append(edge)

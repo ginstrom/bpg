@@ -131,19 +131,10 @@ def _topological_sort(process: Process) -> List[str]:
 
     Determinism is maintained by iterating in the original declaration order of
     ``process.nodes`` when selecting the next zero-in-degree node.
-
-    Args:
-        process: The validated (acyclic) process.
-
-    Returns:
-        A list of node names in topological order.
-
-    Raises:
-        ValidationError: If a cycle is detected (should not occur after
-            ``validate_process`` has been called successfully).
     """
-    # Build adjacency and in-degree structures
+    # adj: mapping from node -> successors
     adj: Dict[str, List[str]] = {name: [] for name in process.nodes}
+    # in_degree: count of incoming edges per node
     in_degree: Dict[str, int] = {name: 0 for name in process.nodes}
 
     for edge in process.edges:
@@ -185,8 +176,8 @@ def _topological_sort(process: Process) -> List[str]:
 def compile_process(process: Process) -> ExecutionIR:
     """Compile a validated :class:`Process` into an :class:`ExecutionIR`.
 
-    This function assumes :func:`~bpg.compiler.validator.validate_process` has
-    already been called successfully.
+    Transforms the hierarchical process (with imports and modules) into a
+    flattened, executable graph of resolved nodes and edges.
     """
     process = normalize_process(process)
 
@@ -224,6 +215,7 @@ def compile_process(process: Process) -> ExecutionIR:
     )
 
     def _inline_module(instance_name: str, module_key: str) -> None:
+        """Flatten module into constituent nodes and rewire internal/external edges."""
         rmod = resolved_modules[module_key]
         entrance_name = f"{instance_name}____in__"
         exit_name = f"{instance_name}____out__"
