@@ -243,7 +243,7 @@ function applyGraphState(nodeStatusMap, waitingNodeNames, nodeRecords) {
     if (nodeName === state.selectedNodeName) {
       rect.setAttribute('stroke', '#3b82f6');
       rect.setAttribute('stroke-width', '3');
-    } else if (rect.getAttribute('stroke') === '#3b82f6') {
+    } else {
       const isTrigger = state.process && nodeName === state.process.trigger;
       rect.setAttribute('stroke', isTrigger ? '#0ea5e9' : '#cbd5e1');
       rect.setAttribute('stroke-width', isTrigger ? '2' : '1');
