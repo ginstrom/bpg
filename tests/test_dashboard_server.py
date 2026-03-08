@@ -414,6 +414,14 @@ def test_dashboard_html_contains_src_check_in_edge_logic():
     assert "srcStatus === 'completed'" in html
 
 
+def test_dashboard_html_contains_selected_node_state():
+    """applyGraphState must track selectedNodeName and apply highlight on click."""
+    from bpg.dashboard.server import _dashboard_html
+    html = _dashboard_html()
+    assert 'selectedNodeName' in html
+    assert 'selected-node' in html
+
+
 def test_dashboard_slack_interactions_rejects_invalid_signature(tmp_path: Path, monkeypatch):
     process_file = _write_process(tmp_path)
     state_dir = tmp_path / ".bpg-state"

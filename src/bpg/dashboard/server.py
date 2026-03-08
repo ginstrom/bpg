@@ -170,7 +170,7 @@ def _dashboard_html() -> str:
   </div>
 <script>
 const waiting_human = 'waiting_human';
-const state = { process: null, runs: [], selectedRun: null, artifacts: [], inbox: [], waiting: [], nodeRecords: {} };
+const state = { process: null, runs: [], selectedRun: null, artifacts: [], inbox: [], waiting: [], nodeRecords: {}, selectedNodeName: null };
 
 async function getJson(path) {
   const res = await fetch(path);
@@ -239,7 +239,25 @@ function applyGraphState(nodeStatusMap, waitingNodeNames, nodeRecords) {
   for (const rect of rects) {
     const nodeName = rect.id.slice(5);
     rect.style.cursor = 'pointer';
-    rect.onclick = () => showNodeDetail(nodeName, nodeRecords);
+    rect.classList.toggle('selected-node', nodeName === state.selectedNodeName);
+    if (nodeName === state.selectedNodeName) {
+      rect.setAttribute('stroke', '#3b82f6');
+      rect.setAttribute('stroke-width', '3');
+    } else if (rect.getAttribute('stroke') === '#3b82f6') {
+      const isTrigger = state.process && nodeName === state.process.trigger;
+      rect.setAttribute('stroke', isTrigger ? '#0ea5e9' : '#cbd5e1');
+      rect.setAttribute('stroke-width', isTrigger ? '2' : '1');
+    }
+    rect.onclick = () => {
+      state.selectedNodeName = nodeName;
+      const nodeStatusMap = {};
+      for (const [n, rec] of Object.entries(state.nodeRecords)) {
+        nodeStatusMap[n] = rec.status || '';
+      }
+      const waitingNodeNames = state.waiting.map((i) => i.node_name).filter(Boolean);
+      applyGraphState(nodeStatusMap, waitingNodeNames, state.nodeRecords);
+      showNodeDetail(nodeName, state.nodeRecords);
+    };
   }
 }
 
