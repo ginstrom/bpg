@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
+import time
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -12,8 +15,9 @@ from bpg.compiler.ir import compile_process
 from bpg.compiler.parser import parse_process_file
 from bpg.compiler.validator import validate_process
 from bpg.compiler.visualizer import generate_html
+from bpg.providers.slack_interactive import SlackInteractiveProvider
 from bpg.runtime.engine import Engine
-from bpg.state.store import StateStore
+from bpg.state.store import StateStore, StateStoreError
 
 
 @dataclass(frozen=True)
@@ -85,6 +89,16 @@ def _process_summary(process_name: str, process) -> dict[str, Any]:
     }
 
 
+def _interaction_for_dashboard(record: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(record)
+    payload.setdefault("provider_id", "unknown")
+    payload.setdefault("node_name", "")
+    payload.setdefault("run_id", "")
+    payload.setdefault("process_name", "")
+    payload.setdefault("status", "pending")
+    return payload
+
+
 def _dashboard_html() -> str:
     return """<!doctype html>
 <html lang=\"en\">
@@ -101,7 +115,7 @@ def _dashboard_html() -> str:
     .panel .body { padding: 10px 12px; }
     iframe { width: 100%; height: 70vh; border: 0; }
     .stack { display: grid; gap: 12px; }
-    .events { max-height: 32vh; overflow: auto; font-size: 12px; white-space: pre-wrap; background: #0b1020; color: #e5e7eb; padding: 8px; border-radius: 6px; }
+    .events { max-height: 26vh; overflow: auto; font-size: 12px; white-space: pre-wrap; background: #0b1020; color: #e5e7eb; padding: 8px; border-radius: 6px; }
     .runs { width: 100%; }
     .run-item { padding: 6px 8px; border-bottom: 1px dashed #e5e7eb; font-size: 12px; border-radius: 6px; cursor: pointer; }
     .run-item:hover { background: #f3f4f6; }
@@ -111,6 +125,7 @@ def _dashboard_html() -> str:
     label { font-size: 12px; color: #374151; }
     input, textarea, select { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; }
     button { padding: 8px 10px; background: #111827; color: #fff; border: 0; border-radius: 6px; cursor: pointer; }
+    .inbox-form { margin-top: 8px; border-top: 1px solid #e5e7eb; padding-top: 8px; }
     #error { color: #b91c1c; font-size: 12px; }
     #info { color: #065f46; font-size: 12px; }
   </style>
@@ -125,9 +140,11 @@ def _dashboard_html() -> str:
     <section class=\"stack\">
       <div class=\"panel\">
         <h3>Runs</h3>
-        <div class=\"body\">
-          <div id=\"runs\" class=\"runs\"></div>
-        </div>
+        <div class=\"body\"><div id=\"runs\" class=\"runs\"></div></div>
+      </div>
+      <div class=\"panel\">
+        <h3>Inbox</h3>
+        <div class=\"body\"><div id=\"inbox\" class=\"runs\"></div></div>
       </div>
       <div class=\"panel\">
         <h3>Event Log</h3>
@@ -136,6 +153,10 @@ def _dashboard_html() -> str:
       <div class=\"panel\">
         <h3>Artifacts</h3>
         <div class=\"body\"><div id=\"artifacts\" class=\"runs\"></div></div>
+      </div>
+      <div class=\"panel\">
+        <h3>Node Detail</h3>
+        <div class=\"body\"><div id=\"nodeDetail\" class=\"events\" style=\"max-height:20vh;font-size:11px;\"></div></div>
       </div>
       <div class=\"panel\">
         <h3>Trigger Input</h3>
@@ -148,12 +169,89 @@ def _dashboard_html() -> str:
     </section>
   </div>
 <script>
-const state = { process: null, runs: [], selectedRun: null, artifacts: [] };
+const waiting_human = 'waiting_human';
+const state = { process: null, runs: [], selectedRun: null, artifacts: [], inbox: [], waiting: [], nodeRecords: {} };
 
 async function getJson(path) {
   const res = await fetch(path);
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${path}`);
   return await res.json();
+}
+
+function inferKind(value) {
+  if (typeof value === 'boolean') return 'bool';
+  if (typeof value === 'number') return Number.isInteger(value) ? 'integer' : 'number';
+  return 'string';
+}
+
+async function respondInteraction(idempotencyKey, payload) {
+  const res = await fetch(`/api/interactions/${encodeURIComponent(idempotencyKey)}/respond`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const out = await res.json();
+  if (!res.ok) throw new Error(out.error || `HTTP ${res.status}`);
+  return out;
+}
+
+function applyGraphState(nodeStatusMap, waitingNodeNames, nodeRecords) {
+  const frame = document.getElementById('graphFrame');
+  const doc = frame.contentDocument;
+  if (!doc) return;
+  const waitingSet = new Set(waitingNodeNames || []);
+  const texts = Array.from(doc.querySelectorAll('text'));
+  for (const text of texts) {
+    const nodeName = (text.textContent || '').trim();
+    if (!nodeName) continue;
+    const status = waitingSet.has(nodeName) ? waiting_human : (nodeStatusMap[nodeName] || '');
+    let color = '#111827';
+    if (status === waiting_human) color = '#d97706';
+    else if (status === 'running') color = '#1d4ed8';
+    else if (status === 'completed') color = '#047857';
+    else if (status === 'failed') color = '#b91c1c';
+    else if (status === 'skipped') color = '#6b7280';
+    text.style.fill = color;
+    text.style.fontWeight = status === waiting_human ? '700' : '500';
+  }
+  const paths = Array.from(doc.querySelectorAll('path[data-src]'));
+  for (const path of paths) {
+    const src = path.dataset.src;
+    const tgt = path.dataset.tgt;
+    const srcStatus = nodeStatusMap[src] || '';
+    const tgtStatus = nodeStatusMap[tgt] || '';
+    if (!srcStatus && !tgtStatus) continue;
+    const taken = srcStatus === 'completed' && (tgtStatus === 'completed' || tgtStatus === 'running');
+    const notTaken = srcStatus === 'skipped' || tgtStatus === 'skipped';
+    if (notTaken && !taken) {
+      path.setAttribute('stroke', '#d1d5db');
+      path.setAttribute('stroke-dasharray', '4 3');
+      path.setAttribute('stroke-width', '1.5');
+      path.setAttribute('marker-end', 'url(#ar)');
+    } else if (taken) {
+      path.setAttribute('stroke', '#059669');
+      path.setAttribute('stroke-width', '2.5');
+      path.removeAttribute('stroke-dasharray');
+      path.setAttribute('marker-end', 'url(#ar-green)');
+    }
+  }
+  const rects = Array.from(doc.querySelectorAll(\"rect[id^='node-']\"));
+  for (const rect of rects) {
+    const nodeName = rect.id.slice(5);
+    rect.style.cursor = 'pointer';
+    rect.onclick = () => showNodeDetail(nodeName, nodeRecords);
+  }
+}
+
+function showNodeDetail(nodeName, nodeRecords) {
+  const panel = document.getElementById('nodeDetail');
+  if (!panel) return;
+  const rec = (nodeRecords || {})[nodeName];
+  if (!rec) { panel.textContent = `No record for ${nodeName}`; return; }
+  const lines = [`Node: ${nodeName}`, `Status: ${rec.status || '\u2014'}`];
+  if (rec.input) lines.push('', 'Input:', JSON.stringify(rec.input, null, 2));
+  if (rec.output) lines.push('', 'Output:', JSON.stringify(rec.output, null, 2));
+  panel.textContent = lines.join('\\n');
 }
 
 function renderRuns() {
@@ -163,7 +261,145 @@ function renderRuns() {
     const el = document.createElement('div');
     el.className = 'run-item' + (state.selectedRun === run.run_id ? ' is-selected' : '');
     el.innerHTML = `<strong>${run.run_id}</strong><br/>status=${run.status} started=${run.started_at || ''}`;
-    el.onclick = () => { state.selectedRun = run.run_id; renderRuns(); refreshEvents(); refreshArtifacts(); };
+    el.onclick = () => { state.selectedRun = run.run_id; renderRuns(); refreshSelectedRun(); };
+    root.appendChild(el);
+  }
+}
+
+function renderInbox() {
+  const root = document.getElementById('inbox');
+  root.innerHTML = '';
+  const rows = state.inbox || [];
+  if (!rows.length) { root.textContent = 'No pending interactions'; return; }
+
+  for (const item of rows) {
+    const el = document.createElement('div');
+    el.className = 'run-item';
+    const provider = item.provider_id || 'unknown';
+    let decisionHtml = '';
+    if (item.status === 'responded' && item.response && typeof item.response === 'object') {
+      const resp = item.response;
+      const decision = resp.decision;
+      const approved = resp.approved;
+      if (decision === 'deny' || approved === false) {
+        decisionHtml = ' <span style=\"color:#b91c1c;font-weight:700\">\u2717 denied</span>';
+      } else if (decision === 'approve' || approved === true) {
+        decisionHtml = ' <span style=\"color:#047857;font-weight:700\">\u2713 approved</span>';
+      } else {
+        const pairs = Object.entries(resp).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(' ');
+        decisionHtml = ` <span style=\"font-size:10px;color:#6b7280\">${pairs}</span>`;
+      }
+    }
+    el.innerHTML = `<strong>${item.run_id}</strong><br/>${item.node_name} (${provider}) status=${item.status}${decisionHtml}`;
+    el.onclick = () => { state.selectedRun = item.run_id; renderRuns(); refreshSelectedRun(); };
+
+    if (provider === 'dashboard.form' && item.status === 'pending') {
+      const form = document.createElement('form');
+      form.className = 'inbox-form';
+      const payload = item.input || {};
+      const entries = Object.entries(payload);
+      const hasDecision = entries.some(([name]) => name === 'decision');
+      const hasApproved = entries.some(([name]) => name === 'approved');
+      const looksLikeApprovalNode = String(item.node_name || '').toLowerCase().includes('approval');
+      if (!hasDecision && !hasApproved && looksLikeApprovalNode) {
+        entries.push(['decision', 'deny']);
+      }
+      if (!entries.length) entries.push(['approved', false], ['reason', '']);
+      const hasDecisionControl = entries.some(([name]) => name === 'decision' || name === 'approved');
+      for (const [name, current] of entries) {
+        const kind = inferKind(current);
+        let input;
+        if (hasDecisionControl && name === 'decision') {
+          input = document.createElement('input');
+          input.type = 'hidden';
+          input.value = String(current || 'deny') === 'approve' ? 'approve' : 'deny';
+          input.dataset.kind = 'string';
+          input.name = name;
+          form.appendChild(input);
+          continue;
+        } else if (hasDecisionControl && name === 'approved' && kind === 'bool') {
+          input = document.createElement('input');
+          input.type = 'hidden';
+          input.value = String(Boolean(current));
+          input.dataset.kind = 'bool';
+          input.name = name;
+          form.appendChild(input);
+          continue;
+        }
+        const row = document.createElement('div');
+        row.className = 'form-row';
+        const label = document.createElement('label');
+        label.textContent = name;
+        row.appendChild(label);
+        if (kind === 'bool') {
+          input = document.createElement('select');
+          input.innerHTML = '<option value=\"true\">true</option><option value=\"false\">false</option>';
+          input.value = String(Boolean(current));
+          input.dataset.kind = 'bool';
+        } else {
+          input = document.createElement('input');
+          input.type = kind === 'number' || kind === 'integer' ? 'number' : 'text';
+          input.value = String(current ?? '');
+          input.dataset.kind = kind;
+        }
+        input.name = name;
+        row.appendChild(input);
+        form.appendChild(row);
+      }
+      if (hasDecisionControl) {
+        const actions = document.createElement('div');
+        actions.className = 'form-row';
+        const approveBtn = document.createElement('button');
+        approveBtn.type = 'button';
+        approveBtn.textContent = 'Approve';
+        approveBtn.onclick = () => {
+          const decision = form.elements['decision'];
+          const approved = form.elements['approved'];
+          if (decision) decision.value = 'approve';
+          if (approved) approved.value = 'true';
+          form.requestSubmit();
+        };
+        const denyBtn = document.createElement('button');
+        denyBtn.type = 'button';
+        denyBtn.textContent = 'Deny';
+        denyBtn.onclick = () => {
+          const decision = form.elements['decision'];
+          const approved = form.elements['approved'];
+          if (decision) decision.value = 'deny';
+          if (approved) approved.value = 'false';
+          form.requestSubmit();
+        };
+        actions.appendChild(approveBtn);
+        actions.appendChild(denyBtn);
+        form.appendChild(actions);
+      } else {
+        const btn = document.createElement('button');
+        btn.type = 'submit';
+        btn.textContent = 'Submit Response';
+        form.appendChild(btn);
+      }
+      form.onsubmit = async (ev) => {
+        ev.preventDefault();
+        document.getElementById('error').textContent = '';
+        const out = {};
+        for (const field of Array.from(form.elements)) {
+          if (!field.name) continue;
+          if (field.dataset.kind === 'bool') out[field.name] = field.value === 'true';
+          else if (field.dataset.kind === 'integer') out[field.name] = Math.trunc(Number(field.value || 0));
+          else if (field.dataset.kind === 'number') out[field.name] = Number(field.value || 0);
+          else out[field.name] = field.value;
+        }
+        try {
+          await respondInteraction(item.idempotency_key, out);
+          await refreshRuns();
+          await refreshInbox();
+          await refreshSelectedRun();
+        } catch (err) {
+          document.getElementById('error').textContent = String(err);
+        }
+      };
+      el.appendChild(form);
+    }
     root.appendChild(el);
   }
 }
@@ -189,7 +425,7 @@ function renderArtifacts() {
     el.className = 'run-item';
     const location = artifact.artifact_path || artifact.path || '';
     const download = artifact.download_url || '#';
-    el.innerHTML = `<strong>${artifact.name || 'artifact'}</strong> (${artifact.format || ''})<br/>${location}<br/><a href="${download}" target="_blank" rel="noopener">Download</a>`;
+    el.innerHTML = `<strong>${artifact.name || 'artifact'}</strong> (${artifact.format || ''})<br/>${location}<br/><a href=\"${download}\" target=\"_blank\" rel=\"noopener\">Download</a>`;
     root.appendChild(el);
   }
 }
@@ -204,6 +440,30 @@ async function refreshArtifacts() {
   } catch (err) {
     root.textContent = String(err);
   }
+}
+
+async function refreshInbox() {
+  const payload = await getJson('/api/inbox?limit=50');
+  state.inbox = payload.interactions || [];
+  renderInbox();
+}
+
+async function refreshSelectedRun() {
+  await refreshEvents();
+  await refreshArtifacts();
+  if (!state.selectedRun) return;
+  const [nodesPayload, waitingPayload] = await Promise.all([
+    getJson(`/api/runs/${state.selectedRun}/nodes`),
+    getJson(`/api/runs/${state.selectedRun}/waiting`),
+  ]);
+  state.nodeRecords = nodesPayload.nodes || {};
+  const nodeStatusMap = {};
+  for (const [nodeName, rec] of Object.entries(state.nodeRecords)) {
+    nodeStatusMap[nodeName] = rec.status || '';
+  }
+  state.waiting = waitingPayload.waiting || [];
+  const waitingNodeNames = state.waiting.map((i) => i.node_name).filter(Boolean);
+  applyGraphState(nodeStatusMap, waitingNodeNames, state.nodeRecords);
 }
 
 function renderTriggerForm() {
@@ -245,22 +505,17 @@ function renderTriggerForm() {
     const label = document.createElement('label');
     label.textContent = `${name}${spec.optional ? ' (optional)' : ''}`;
     row.appendChild(label);
-
     let input;
     if (spec.kind === 'bool') {
       input = document.createElement('select');
-      input.innerHTML = '<option value="">(unset)</option><option value="true">true</option><option value="false">false</option>';
+      input.innerHTML = '<option value=\"\">(unset)</option><option value=\"true\">true</option><option value=\"false\">false</option>';
     } else if (spec.kind === 'enum') {
       input = document.createElement('select');
-      input.innerHTML = ['<option value="">(select)</option>', ...spec.values.map((v) => `<option value="${v}">${v}</option>`)].join('');
+      input.innerHTML = ['<option value=\"\">(select)</option>', ...spec.values.map((v) => `<option value=\"${v}\">${v}</option>`)].join('');
     } else {
       input = document.createElement('input');
       input.type = spec.kind === 'number' || spec.kind === 'integer' ? 'number' : 'text';
-      if (spec.kind === 'list') {
-        input.placeholder = spec.item === 'number' || spec.item === 'integer'
-          ? 'e.g. 1,2,3 or 1-3'
-          : 'comma or space separated values';
-      }
+      if (spec.kind === 'list') input.placeholder = spec.item === 'number' || spec.item === 'integer' ? 'e.g. 1,2,3 or 1-3' : 'comma or space separated values';
     }
     input.name = name;
     row.appendChild(input);
@@ -287,13 +542,12 @@ function renderTriggerForm() {
       else payload[name] = value;
     }
     try {
-      const res = await fetch('/api/trigger', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-      });
+      const res = await fetch('/api/trigger', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const out = await res.json();
       if (!res.ok) throw new Error(out.error || `HTTP ${res.status}`);
       document.getElementById('info').textContent = `Triggered run ${out.run_id}`;
       await refreshRuns();
+      await refreshInbox();
     } catch (err) {
       document.getElementById('error').textContent = String(err);
     }
@@ -305,19 +559,21 @@ async function refreshRuns() {
   state.runs = payload.runs || [];
   renderRuns();
   if (!state.selectedRun && state.runs.length > 0) state.selectedRun = state.runs[0].run_id;
-  await refreshEvents();
-  await refreshArtifacts();
+  await refreshSelectedRun();
 }
 
 async function bootstrap() {
   try {
-    const process = await getJson('/api/process');
-    state.process = process;
+    state.process = await getJson('/api/process');
     renderTriggerForm();
     const graph = await getJson('/api/graph');
-    document.getElementById('graphFrame').srcdoc = graph.html;
+    const frame = document.getElementById('graphFrame');
+    frame.srcdoc = graph.html;
+    frame.addEventListener('load', () => refreshSelectedRun().catch(() => {}));
     await refreshRuns();
-    setInterval(refreshRuns, 2000);
+    await refreshInbox();
+    setInterval(() => refreshRuns().catch(() => {}), 2000);
+    setInterval(() => refreshInbox().catch(() => {}), 2000);
   } catch (err) {
     document.getElementById('error').textContent = String(err);
   }
@@ -362,6 +618,32 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return None
         return process
 
+    def _verify_slack_signature(self, raw_body: bytes) -> tuple[bool, str]:
+        secret = os.getenv("SLACK_SIGNING_SECRET", "")
+        if not secret:
+            return False, "SLACK_SIGNING_SECRET is not configured"
+
+        timestamp = self.headers.get("X-Slack-Request-Timestamp", "")
+        signature = self.headers.get("X-Slack-Signature", "")
+        if not timestamp or not signature:
+            return False, "Missing Slack signature headers"
+        try:
+            request_ts = int(timestamp)
+        except ValueError:
+            return False, "Invalid Slack timestamp header"
+        if abs(int(time.time()) - request_ts) > 300:
+            return False, "Slack timestamp outside allowed window"
+
+        basestring = f"v0:{timestamp}:{raw_body.decode('utf-8')}"
+        expected = "v0=" + hmac.new(
+            secret.encode("utf-8"),
+            basestring.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        if not hmac.compare_digest(expected, signature):
+            return False, "Invalid Slack signature"
+        return True, ""
+
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
@@ -398,6 +680,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_json(200, {"runs": runs})
             return
 
+        if path == "/api/inbox":
+            limit = int((query.get("limit") or ["50"])[0])
+            store = StateStore(self.config.state_dir)
+            interactions = store.list_interactions(
+                process_name=self.config.process_name,
+                limit=max(1, limit),
+            )
+            self._send_json(
+                200,
+                {"interactions": [_interaction_for_dashboard(item) for item in interactions]},
+            )
+            return
+
         if path.startswith("/api/runs/"):
             parts = [p for p in path.split("/") if p]
             if len(parts) >= 3:
@@ -421,8 +716,25 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     nodes = store.list_node_records(run_id)
                     self._send_json(200, {"run_id": run_id, "nodes": nodes})
                     return
+                if len(parts) == 4 and parts[3] == "waiting":
+                    interactions = store.list_interactions(
+                        process_name=self.config.process_name,
+                        run_id=run_id,
+                        limit=200,
+                    )
+                    waiting = [
+                        _interaction_for_dashboard(item)
+                        for item in interactions
+                        if item.get("status") == "pending"
+                    ]
+                    self._send_json(200, {"run_id": run_id, "waiting": waiting})
+                    return
                 if len(parts) == 4 and parts[3] == "artifacts":
-                    artifacts = store.list_run_artifacts(run_id)
+                    try:
+                        artifacts = store.list_run_artifacts(run_id)
+                    except StateStoreError:
+                        self._send_json(404, {"error": f"Run '{run_id}' not found"})
+                        return
                     for item in artifacts:
                         if not isinstance(item, dict):
                             continue
@@ -434,7 +746,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     return
                 if len(parts) == 6 and parts[3] == "artifacts" and parts[5] == "download":
                     artifact_name = unquote(parts[4])
-                    artifacts = store.list_run_artifacts(run_id)
+                    try:
+                        artifacts = store.list_run_artifacts(run_id)
+                    except StateStoreError:
+                        self._send_json(404, {"error": f"Run '{run_id}' not found"})
+                        return
                     selected: dict[str, Any] | None = None
                     for item in artifacts:
                         if not isinstance(item, dict):
@@ -466,6 +782,140 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
+        if parsed.path == "/api/slack/interactions":
+            content_length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(content_length) if content_length > 0 else b""
+            ok, reason = self._verify_slack_signature(raw)
+            if not ok:
+                self._send_json(401, {"error": reason})
+                return
+
+            form = parse_qs(raw.decode("utf-8"))
+            payload_raw = (form.get("payload") or [""])[0]
+            if not payload_raw:
+                self._send_json(400, {"error": "Missing Slack payload form field"})
+                return
+            try:
+                payload = json.loads(payload_raw)
+            except json.JSONDecodeError:
+                self._send_json(400, {"error": "Invalid Slack payload JSON"})
+                return
+            if not isinstance(payload, dict):
+                self._send_json(400, {"error": "Slack payload must be a JSON object"})
+                return
+
+            actions = payload.get("actions")
+            if not isinstance(actions, list) or not actions:
+                self._send_json(400, {"error": "Slack payload missing actions"})
+                return
+            action = actions[0] if isinstance(actions[0], dict) else {}
+            action_id = action.get("action_id")
+            if not isinstance(action_id, str) or not action_id:
+                self._send_json(400, {"error": "Slack action is missing action_id"})
+                return
+
+            try:
+                idempotency_key, action_label = SlackInteractiveProvider.parse_action(action_id)
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
+
+            store = StateStore(self.config.state_dir)
+            pending = store.load_pending_interaction(idempotency_key)
+            if pending is None:
+                self._send_json(404, {"error": f"Interaction '{idempotency_key}' not found"})
+                return
+
+            run_id = pending.get("run_id")
+            if not isinstance(run_id, str) or not run_id:
+                self._send_json(400, {"error": "Interaction has no run_id"})
+                return
+
+            output = SlackInteractiveProvider.action_to_output(action_label)
+            user = payload.get("user")
+            if isinstance(user, dict):
+                user_id = user.get("id")
+                if isinstance(user_id, str) and user_id:
+                    output["slack_user_id"] = user_id
+
+            store.save_interaction_response(idempotency_key, output)
+
+            process = self._process_or_404()
+            if process is None:
+                return
+            try:
+                Engine(process=process, state_store=store).step(run_id)
+            except Exception as exc:  # pragma: no cover - defensive API boundary
+                self._send_json(500, {"error": f"Resume failed: {exc}"})
+                return
+
+            self._send_json(
+                200,
+                {
+                    "ok": True,
+                    "idempotency_key": idempotency_key,
+                    "run_id": run_id,
+                    "response": output,
+                },
+            )
+            return
+
+        if parsed.path.startswith("/api/interactions/") and parsed.path.endswith("/respond"):
+            parts = [p for p in parsed.path.split("/") if p]
+            if len(parts) != 4:
+                self._send_json(404, {"error": "Not found"})
+                return
+            idempotency_key = unquote(parts[2])
+
+            content_length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            try:
+                payload = json.loads(raw.decode("utf-8")) if raw else {}
+            except json.JSONDecodeError:
+                self._send_json(400, {"error": "Invalid JSON body"})
+                return
+            if not isinstance(payload, dict):
+                self._send_json(400, {"error": "Interaction response must be a JSON object"})
+                return
+
+            store = StateStore(self.config.state_dir)
+            pending = store.load_pending_interaction(idempotency_key)
+            if pending is None:
+                self._send_json(404, {"error": f"Interaction '{idempotency_key}' not found"})
+                return
+
+            run_id = pending.get("run_id")
+            if not isinstance(run_id, str) or not run_id:
+                self._send_json(400, {"error": "Interaction has no run_id"})
+                return
+
+            store.save_interaction_response(idempotency_key, payload)
+
+            run = store.load_run(run_id)
+            if run is None:
+                self._send_json(404, {"error": f"Run '{run_id}' not found"})
+                return
+
+            process = self._process_or_404()
+            if process is None:
+                return
+            try:
+                Engine(process=process, state_store=store).step(run_id)
+            except Exception as exc:  # pragma: no cover - defensive API boundary
+                self._send_json(500, {"error": f"Resume failed: {exc}"})
+                return
+
+            self._send_json(
+                200,
+                {
+                    "idempotency_key": idempotency_key,
+                    "run_id": run_id,
+                    "response": payload,
+                    "status": "responded",
+                },
+            )
+            return
+
         if parsed.path != "/api/trigger":
             self._send_json(404, {"error": "Not found"})
             return
