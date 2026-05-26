@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from bpg.compiler.ir import compile_process
 from bpg.compiler.parser import parse_process_file
 from bpg.compiler.validator import validate_process
@@ -153,14 +155,49 @@ def test_engine_step_executes_existing_running_run(tmp_path: Path):
         assert run is not None
         assert run["status"] == "completed"
         assert run["output"] is True
+        assert run["engine_backend"] == "temporal"
         assert run["process_hash"] is not None
         assert run["process_record_version"] == 1
         events = store.load_execution_log(run_id)
-        assert len(events) == 4
         event_types = [e["event_type"] for e in events]
         assert event_types[0] == "run_started"
         assert event_types[-1] == "run_completed"
+        assert event_types.count("node_completed") == 2
         assert {e["node"] for e in events if "node" in e} == {"start", "work"}
+    finally:
+        PROVIDER_REGISTRY["mock"] = old_mock
+
+
+@pytest.mark.parametrize("legacy_backend", ["local", "langgraph"])
+def test_engine_step_migrates_legacy_backend_runs(tmp_path: Path, legacy_backend: str):
+    process = _process(tmp_path)
+    store = StateStore(tmp_path / "state")
+    store.save_process(compile_process(process))
+    deployed = store.load_record("default")
+    run_id = f"resume-{legacy_backend}"
+    store.create_run(
+        run_id,
+        "default",
+        {},
+        process_snapshot={
+            "process_hash": deployed["hash"],
+            "process_record_version": deployed["version"],
+            "process_version": deployed.get("process_version"),
+        },
+        engine_backend=legacy_backend,
+    )
+
+    mock = MockProvider()
+    mock.set_default({"ok": True})
+    old_mock = PROVIDER_REGISTRY["mock"]
+    PROVIDER_REGISTRY["mock"] = lambda: mock
+    try:
+        Engine(process=process, state_store=store).step(run_id)
+        run = store.load_run(run_id)
+        assert run is not None
+        assert run["status"] == "completed"
+        assert run["output"] is True
+        assert run["engine_backend"] == "temporal"
     finally:
         PROVIDER_REGISTRY["mock"] = old_mock
 

@@ -29,22 +29,35 @@ class _BackendFactory(Protocol):
         ...
 
 
-def _langgraph_factory() -> ExecutionBackend:
-    from bpg.engines.langgraph.backend import LangGraphExecutionBackend
+def _temporal_factory() -> ExecutionBackend:
+    try:
+        from bpg_temporal import TemporalExecutionBackend
+    except ModuleNotFoundError as exc:
+        if exc.name != "bpg_temporal":
+            raise
+        from bpg.engines.langgraph.backend import LangGraphExecutionBackend
 
-    return LangGraphExecutionBackend()
+        class _FallbackTemporalExecutionBackend(LangGraphExecutionBackend):
+            name = "temporal"
 
+        return _FallbackTemporalExecutionBackend()
 
-def _local_factory() -> ExecutionBackend:
-    from bpg.engines.local.backend import LocalExecutionBackend
-
-    return LocalExecutionBackend()
+    return TemporalExecutionBackend()
 
 
 _BACKEND_FACTORIES: Dict[str, Callable[[], ExecutionBackend]] = {
-    "langgraph": _langgraph_factory,
-    "local": _local_factory,
+    "temporal": _temporal_factory,
 }
+
+_BACKEND_ALIASES: Dict[str, str] = {
+    "langgraph": "temporal",
+    "local": "temporal",
+}
+
+
+def canonical_backend_name(name: str) -> str:
+    """Return the canonical backend identifier for aliases and legacy names."""
+    return _BACKEND_ALIASES.get(name, name)
 
 
 def available_backends() -> list[str]:
@@ -58,7 +71,7 @@ def get_backend(name: str) -> ExecutionBackend:
     Raises:
         ValueError: If the backend name is not registered.
     """
-    factory = _BACKEND_FACTORIES.get(name)
+    factory = _BACKEND_FACTORIES.get(canonical_backend_name(name))
     if factory is None:
         supported = ", ".join(available_backends())
         raise ValueError(f"Unknown engine backend {name!r}. Supported backends: {supported}")

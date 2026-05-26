@@ -22,7 +22,7 @@ from typing import Any, Dict
 
 from bpg.models.schema import Process
 from bpg.runtime.expr import resolve_mapping
-from bpg.runtime.backends import get_backend
+from bpg.runtime.backends import canonical_backend_name, get_backend
 from bpg.runtime.events import normalize_event
 
 
@@ -39,10 +39,10 @@ class Engine:
     materialization.
     """
 
-    def __init__(self, process: Process, state_store: Any, backend: str = "langgraph") -> None:
+    def __init__(self, process: Process, state_store: Any, backend: str = "temporal") -> None:
         self._process = process
         self._state_store = state_store
-        self._backend_name = backend
+        self._backend_name = canonical_backend_name(backend)
 
     def trigger(self, input_payload: Dict[str, Any]) -> str:
         """Start a new process run and return the unique ``run_id``.
@@ -112,7 +112,9 @@ class Engine:
 
         # Replays the run idempotently using the same run_id so provider calls
         # can deduplicate external effects by idempotency key.
-        backend_name = run_record.get("engine_backend", self._backend_name)
+        backend_name = canonical_backend_name(
+            str(run_record.get("engine_backend", self._backend_name))
+        )
         self._execute_run(
             run_id=run_id,
             input_payload=input_payload,
@@ -162,7 +164,12 @@ class Engine:
             normalized_entry = normalize_event(entry, run_id=run_id)
             self._state_store.append_execution_event(run_id, normalized_entry)
             if node_name:
-                self._state_store.save_node_record(run_id, node_name, entry)
+                node_record = dict(entry)
+                node_record.setdefault(
+                    "timestamp",
+                    node_record.get("completed_at") or node_record.get("started_at"),
+                )
+                self._state_store.save_node_record(run_id, node_name, node_record)
 
         run_status = final_state.get("run_status", "completed")
         updates = {
