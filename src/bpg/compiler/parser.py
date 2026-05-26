@@ -19,7 +19,7 @@ from typing import Any, Dict
 import yaml
 
 from bpg.compiler.errors import CompilerDiagnostic
-from bpg.models.schema import Process
+from bpg.models.schema import Process, ProcessSpecV2
 
 
 class ParseError(Exception):
@@ -99,6 +99,15 @@ def parse_process_file(path: Path) -> Process:
     except Exception as e:
         # Pydantic errors can be verbose; for Phase 1 we just wrap them.
         raise ParseError(f"Process validation failed: {e}", file=path)
+
+
+def parse_process_spec_v2_file(path: Path) -> ProcessSpecV2:
+    """Parse a process spec v2 YAML file into a ``ProcessSpecV2`` model."""
+    raw = load_yaml_file(path.resolve())
+    try:
+        return ProcessSpecV2.model_validate(raw)
+    except Exception as e:
+        raise ParseError(f"Process spec v2 validation failed: {e}", file=path)
 
 
 def _load_with_imports(path: Path, stack: list[Path]) -> Dict[str, Any]:

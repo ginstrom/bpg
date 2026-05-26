@@ -1,25 +1,41 @@
 """BPG domain models — Pydantic schemas for all core BPG concepts."""
 
 from bpg.models.schema import (
+    ApprovalPolicyV2,
+    CompensationPolicyV2,
     Edge,
     EdgeFailureAction,
     NodeInstance,
+    NodeRef,
     NodeStatus,
     NodeType,
+    ObservabilityPolicyV2,
     Process,
+    ProcessBodyV2,
+    ProcessEdgeSpecV2,
     ProcessMetadata,
+    ProcessNodeSpecV2,
+    ProcessSpecV2,
     RetryPolicy,
     TypeDef,
 )
 
 __all__ = [
+    "ApprovalPolicyV2",
+    "CompensationPolicyV2",
     "Edge",
     "EdgeFailureAction",
     "NodeInstance",
+    "NodeRef",
     "NodeStatus",
     "NodeType",
+    "ObservabilityPolicyV2",
     "Process",
+    "ProcessBodyV2",
+    "ProcessEdgeSpecV2",
     "ProcessMetadata",
+    "ProcessNodeSpecV2",
+    "ProcessSpecV2",
     "RetryPolicy",
     "TypeDef",
 ]
