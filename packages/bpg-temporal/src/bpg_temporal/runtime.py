@@ -90,6 +90,8 @@ class TemporalRuntime:
             cached_results=cached_results,
         )
         result = workflow.run(input_payload=input_payload, run_id=run_id)
+        # Stub: real Temporal metadata (workflow ID, namespace) will be populated
+        # when the actual Temporal client is wired up in step 4.
         result.setdefault(
             "temporal",
             {

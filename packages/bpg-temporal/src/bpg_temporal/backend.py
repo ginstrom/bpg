@@ -23,7 +23,6 @@ class TemporalExecutionBackend:
         cached_results: Dict[str, Dict[str, Any]],
     ) -> Dict[str, Any]:
         _ = state_store
-        _ = cached_results
         return self._runtime.run_workflow(
             process=process,
             input_payload=input_payload,

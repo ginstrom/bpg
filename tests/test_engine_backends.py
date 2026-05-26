@@ -270,6 +270,9 @@ edges:
         records = store.list_node_records(run_id)
         assert records["worker"]["status"] == "completed"
         events = store.load_execution_log(run_id)
+        # event_type field (not legacy "event") is the canonical key after the schema migration;
+        # node_scheduled is emitted internally by the LangGraph runtime but not surfaced
+        # through the normalized event log, so only node_completed is asserted here.
         event_types = [e.get("event_type") for e in events if e.get("node") == "worker"]
         assert "node_completed" in event_types
     finally:
