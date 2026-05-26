@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import shlex
+import shutil
 import subprocess
 import tomllib
 from pathlib import Path
+
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -50,6 +53,8 @@ def test_boundary_policy_covers_all_framework_packages() -> None:
 
 
 def test_uv_workspace_sync_smoke(tmp_path: Path) -> None:
+    if shutil.which("uv") is None:
+        pytest.fail("uv is required to run this test but was not found on PATH")
     venv_dir = tmp_path / ".venv"
     import_roots = ", ".join(EXPECTED_IMPORT_ROOTS.values())
     smoke = (

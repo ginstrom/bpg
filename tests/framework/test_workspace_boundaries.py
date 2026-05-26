@@ -24,7 +24,7 @@ def _iter_python_files(package_dir: Path):
 def _top_level_imports(module_path: Path) -> set[str]:
     tree = ast.parse(module_path.read_text(), filename=str(module_path))
     imports: set[str] = set()
-    for node in ast.walk(tree):
+    for node in tree.body:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 imports.add(alias.name.split(".", 1)[0])
