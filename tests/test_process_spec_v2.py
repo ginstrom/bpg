@@ -6,6 +6,7 @@ import pytest
 
 from bpg.compiler.parser import ParseError, parse_process_spec_v2_file
 from bpg.compiler.spec_v2 import compile_process_spec_v2, validate_process_spec_v2
+from bpg.compiler.validator import ValidationError
 
 
 def test_parse_and_compile_process_spec_v2(tmp_path: Path):
@@ -17,6 +18,10 @@ process:
   name: review_flow
   trigger: submit_request
   nodes:
+    rollback_request:
+      ref:
+        package: bpg.nodes.core.compensation@v1
+        node: rollback
     submit_request:
       ref:
         package: bpg.nodes.core.trigger@v1
@@ -37,10 +42,6 @@ process:
       compensation:
         strategy: run_node
         node: rollback_request
-    rollback_request:
-      ref:
-        package: bpg.nodes.core.compensation@v1
-        node: rollback
   edges:
     - from: submit_request
       to: manager_approval
@@ -62,9 +63,20 @@ process:
         "manager_approval",
         "rollback_request",
     ]
-    assert compiled.execution_plan.nodes[1].package_id == "bpg.nodes.slack.approval@v1"
-    assert compiled.execution_plan.nodes[1].approval.required is True
-    assert compiled.execution_plan.nodes[1].compensation.strategy == "run_node"
+    assert [edge.source for edge in compiled.execution_plan.edges] == [
+        "manager_approval",
+        "submit_request",
+    ]
+    assert [edge.target for edge in compiled.execution_plan.edges] == [
+        "rollback_request",
+        "manager_approval",
+    ]
+    manager_approval = next(
+        node for node in compiled.execution_plan.nodes if node.node_id == "manager_approval"
+    )
+    assert manager_approval.package_id == "bpg.nodes.slack.approval@v1"
+    assert manager_approval.approval.required is True
+    assert manager_approval.compensation.strategy == "run_node"
     assert compiled.capability_requirements.required_packages == [
         "bpg.nodes.core.compensation@v1",
         "bpg.nodes.core.trigger@v1",
@@ -121,5 +133,71 @@ process:
     )
 
     spec = parse_process_spec_v2_file(process_file)
-    with pytest.raises(ValueError, match="missing_handler"):
+    with pytest.raises(ValidationError, match="missing_handler"):
+        validate_process_spec_v2(spec)
+
+
+def test_validate_process_spec_v2_rejects_trigger_with_incoming_edge(tmp_path: Path):
+    process_file = tmp_path / "invalid-trigger-edge.v2.bpg.yaml"
+    process_file.write_text(
+        """
+schema_version: 2
+process:
+  name: invalid_trigger
+  trigger: start
+  nodes:
+    start:
+      ref:
+        package: bpg.nodes.core.trigger@v1
+        node: trigger
+    review:
+      ref:
+        package: bpg.nodes.core.action@v1
+        node: review
+  edges:
+    - from: review
+      to: start
+""",
+        encoding="utf-8",
+    )
+
+    spec = parse_process_spec_v2_file(process_file)
+    with pytest.raises(ValidationError, match="must not have incoming edges"):
+        validate_process_spec_v2(spec)
+
+
+def test_validate_process_spec_v2_rejects_cycles(tmp_path: Path):
+    process_file = tmp_path / "invalid-cycle.v2.bpg.yaml"
+    process_file.write_text(
+        """
+schema_version: 2
+process:
+  name: invalid_cycle
+  trigger: start
+  nodes:
+    start:
+      ref:
+        package: bpg.nodes.core.trigger@v1
+        node: trigger
+    review:
+      ref:
+        package: bpg.nodes.core.action@v1
+        node: review
+    finish:
+      ref:
+        package: bpg.nodes.core.action@v1
+        node: finish
+  edges:
+    - from: start
+      to: review
+    - from: review
+      to: finish
+    - from: finish
+      to: review
+""",
+        encoding="utf-8",
+    )
+
+    spec = parse_process_spec_v2_file(process_file)
+    with pytest.raises(ValidationError, match="Cycle detected"):
         validate_process_spec_v2(spec)
