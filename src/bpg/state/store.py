@@ -820,4 +820,4 @@ class StateStore:
             ),
             reverse=True,
         )
-        return records[: max(1, limit)]
+        return records[:limit]

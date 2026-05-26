@@ -85,18 +85,28 @@ def _docker_ready() -> bool:
     return result.returncode == 0
 
 
-def _docker_image_available(image: str) -> bool:
+def _ensure_docker_image(image: str) -> None:
     try:
-        result = subprocess.run(
+        inspect = subprocess.run(
             ["docker", "image", "inspect", image],
             capture_output=True,
-            text=True,
             timeout=10,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return False
-    return result.returncode == 0
+        pytest.skip(f"Docker image inspect failed for {image}")
+        return
+    if inspect.returncode == 0:
+        return
+    pull = subprocess.run(
+        ["docker", "pull", image],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    if pull.returncode != 0:
+        pytest.fail(f"docker pull {image} failed:\n{pull.stderr or pull.stdout}")
 
 
 def test_e2e_install_in_fresh_container_smoke(tmp_path: Path) -> None:
@@ -111,8 +121,7 @@ def test_e2e_install_in_fresh_container_smoke(tmp_path: Path) -> None:
     (workspace / "input.yaml").write_text(INPUT_YAML)
 
     image = os.environ.get("BPG_E2E_DOCKER_IMAGE", "python:3.12-slim")
-    if not _docker_image_available(image):
-        pytest.skip(f"Docker image is not available locally for container install smoke test: {image}")
+    _ensure_docker_image(image)
 
     cmd = [
         "docker",

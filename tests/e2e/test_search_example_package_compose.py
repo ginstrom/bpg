@@ -35,18 +35,28 @@ def _docker_ready() -> bool:
     return result.returncode == 0
 
 
-def _docker_image_available(image: str) -> bool:
+def _ensure_docker_image(image: str) -> None:
     try:
-        result = subprocess.run(
+        inspect = subprocess.run(
             ["docker", "image", "inspect", image],
             capture_output=True,
-            text=True,
             timeout=10,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return False
-    return result.returncode == 0
+        pytest.skip(f"Docker image inspect failed for {image}")
+        return
+    if inspect.returncode == 0:
+        return
+    pull = subprocess.run(
+        ["docker", "pull", image],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    if pull.returncode != 0:
+        pytest.fail(f"docker pull {image} failed:\n{pull.stderr or pull.stdout}")
 
 
 def _run_compose(compose_dir: Path, *args: str, timeout: int = 600) -> subprocess.CompletedProcess[str]:
@@ -83,8 +93,7 @@ def _run_compose(compose_dir: Path, *args: str, timeout: int = 600) -> subproces
 def test_e2e_packaged_search_examples_via_docker_compose(tmp_path: Path) -> None:
     if not _docker_ready():
         pytest.skip("Docker is not available for packaged compose search e2e test")
-    if not _docker_image_available("python:3.12-slim"):
-        pytest.skip("Docker image is not available locally for packaged compose search e2e test: python:3.12-slim")
+    _ensure_docker_image("python:3.12-slim")
 
     ingest_pkg = tmp_path / "pkg-ingest"
     retrieve_pkg = tmp_path / "pkg-retrieve"
