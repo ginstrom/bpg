@@ -13,7 +13,7 @@ allowed_legacy_imports = ["bpg"]
 [packages.bpg_temporal]
 path = "packages/bpg-temporal"
 owns = "Temporal runtime integration points."
-allowed_workspace_imports = []
+allowed_workspace_imports = ["bpg_langgraph"]
 allowed_legacy_imports = ["bpg"]
 
 [packages.bpg_langgraph]

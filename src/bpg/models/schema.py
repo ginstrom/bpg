@@ -80,8 +80,31 @@ class NodeType(_ImmutableModel):
         default=None,
         description="Default execution timeout, e.g. '5m' or '24h'.",
     )
+    engine: Optional[str] = Field(
+        default=None,
+        description="Optional node-local execution engine, e.g. 'langgraph'.",
+    )
+    checkpoint: Optional["LangGraphCheckpointPolicy"] = Field(
+        default=None,
+        description="Checkpoint policy for node-local graph execution.",
+    )
+    tool_registry: List[str] = Field(
+        default_factory=list,
+        description="Tool identifiers available to node-local graph execution.",
+    )
+    structured_output_schema: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Structured output contract for node-local graph execution.",
+    )
 
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+
+
+class LangGraphCheckpointPolicy(_ImmutableModel):
+    """Checkpoint policy for LangGraph-backed node execution."""
+
+    max_inline_bytes: int = Field(default=65_536, ge=1)
+    spill_to_blob: bool = Field(default=True)
 
 
 # ---------------------------------------------------------------------------
