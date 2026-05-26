@@ -769,3 +769,55 @@ class StateStore:
                 return record.get("response") if record else None
         except Exception as e:
             raise StateStoreError(f"Failed to load interaction response {idempotency_key}: {e}")
+
+    def list_interactions(
+        self,
+        *,
+        process_name: Optional[str] = None,
+        run_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """List pending/responded human interactions, newest first."""
+        interactions_dir = self._state_dir / "interactions"
+        if not interactions_dir.exists():
+            return []
+
+        records: List[Dict[str, Any]] = []
+        for item in sorted(interactions_dir.iterdir(), reverse=True):
+            if not item.is_dir():
+                continue
+
+            pending = self.load_pending_interaction(item.name)
+            if pending is None:
+                continue
+            if process_name is not None and pending.get("process_name") != process_name:
+                continue
+            if run_id is not None and pending.get("run_id") != run_id:
+                continue
+
+            response_path = item / "response.yaml"
+            record = dict(pending)
+            if response_path.exists():
+                try:
+                    with open(response_path) as f:
+                        response_record = yaml.safe_load(f) or {}
+                except Exception as e:
+                    raise StateStoreError(f"Failed to load interaction response {item.name}: {e}")
+                record["status"] = "responded"
+                record["response"] = response_record.get("response")
+                if "responded_at" in response_record:
+                    record["responded_at"] = response_record["responded_at"]
+            else:
+                record["status"] = "pending"
+
+            records.append(record)
+
+        records.sort(
+            key=lambda record: (
+                record.get("responded_at")
+                or record.get("created_at")
+                or ""
+            ),
+            reverse=True,
+        )
+        return records[: max(1, limit)]

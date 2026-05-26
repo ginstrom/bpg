@@ -27,7 +27,7 @@ from bpg.runtime.langgraph_runtime import (
 )
 from bpg.runtime.observability import ListEventSink, replay_run
 
-_PROCESS_FILE = Path("/home/ryan/play/bpg/process.bpg.yaml")
+_PROCESS_FILE = Path(__file__).resolve().parents[1] / "process.bpg.yaml"
 
 
 @pytest.fixture(scope="module")

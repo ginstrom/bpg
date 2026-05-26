@@ -1,0 +1,10 @@
+[project]
+name = "bpg-temporal"
+version = "0.1.0"
+description = "Temporal runtime integration package for BPG."
+readme = "README.md"
+requires-python = ">=3.12"
+
+[build-system]
+requires = ["uv_build>=0.9.17,<0.10.0"]
+build-backend = "uv_build"

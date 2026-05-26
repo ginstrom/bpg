@@ -28,7 +28,7 @@ from bpg.providers.mock import MockProvider
 from bpg.runtime.langgraph_runtime import LangGraphRuntime
 from bpg.runtime.observability import ListEventSink
 
-_PROCESS_FILE = Path("/home/ryan/play/bpg/process.bpg.yaml")
+_PROCESS_FILE = Path(__file__).resolve().parents[1] / "process.bpg.yaml"
 
 
 @pytest.fixture(scope="module")

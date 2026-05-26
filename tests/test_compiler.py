@@ -403,7 +403,7 @@ def test_compile_process_topo_order():
 # compile_process — full example (process.bpg.yaml)
 # ---------------------------------------------------------------------------
 
-_PROCESS_FILE = Path("/home/ryan/play/bpg/process.bpg.yaml")
+_PROCESS_FILE = Path(__file__).resolve().parents[1] / "process.bpg.yaml"
 
 
 def test_compile_process_full_example():

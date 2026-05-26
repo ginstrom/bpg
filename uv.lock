@@ -2,6 +2,16 @@ version = 1
 revision = 3
 requires-python = ">=3.12"
 
+[manifest]
+members = [
+    "bpg",
+    "bpg-cli",
+    "bpg-core",
+    "bpg-langgraph",
+    "bpg-sdk",
+    "bpg-temporal",
+]
+
 [[package]]
 name = "annotated-doc"
 version = "0.0.4"
@@ -47,6 +57,12 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "bpg-cli" },
+    { name = "bpg-core" },
+    { name = "bpg-langgraph" },
+    { name = "bpg-sdk" },
+    { name = "bpg-temporal" },
+    { name = "pytest" },
     { name = "pytest-cov" },
 ]
 
@@ -60,7 +76,40 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "pytest-cov", specifier = ">=7.0.0" }]
+dev = [
+    { name = "bpg-cli", editable = "packages/bpg-cli" },
+    { name = "bpg-core", editable = "packages/bpg-core" },
+    { name = "bpg-langgraph", editable = "packages/bpg-langgraph" },
+    { name = "bpg-sdk", editable = "packages/bpg-sdk" },
+    { name = "bpg-temporal", editable = "packages/bpg-temporal" },
+    { name = "pytest", specifier = ">=9.0.0" },
+    { name = "pytest-cov", specifier = ">=7.0.0" },
+]
+
+[[package]]
+name = "bpg-cli"
+version = "0.1.0"
+source = { editable = "packages/bpg-cli" }
+
+[[package]]
+name = "bpg-core"
+version = "0.1.0"
+source = { editable = "packages/bpg-core" }
+
+[[package]]
+name = "bpg-langgraph"
+version = "0.1.0"
+source = { editable = "packages/bpg-langgraph" }
+
+[[package]]
+name = "bpg-sdk"
+version = "0.1.0"
+source = { editable = "packages/bpg-sdk" }
+
+[[package]]
+name = "bpg-temporal"
+version = "0.1.0"
+source = { editable = "packages/bpg-temporal" }
 
 [[package]]
 name = "certifi"

@@ -1,0 +1,29 @@
+[packages.bpg_core]
+path = "packages/bpg-core"
+owns = "Compiler APIs, schema validation, and framework semantics."
+allowed_workspace_imports = []
+allowed_legacy_imports = ["bpg"]
+
+[packages.bpg_sdk]
+path = "packages/bpg-sdk"
+owns = "Author-facing SDK interfaces and provider contracts."
+allowed_workspace_imports = []
+allowed_legacy_imports = ["bpg"]
+
+[packages.bpg_temporal]
+path = "packages/bpg-temporal"
+owns = "Temporal runtime integration points."
+allowed_workspace_imports = []
+allowed_legacy_imports = ["bpg"]
+
+[packages.bpg_langgraph]
+path = "packages/bpg-langgraph"
+owns = "LangGraph-backed runtime execution support."
+allowed_workspace_imports = []
+allowed_legacy_imports = ["bpg"]
+
+[packages.bpg_cli]
+path = "packages/bpg-cli"
+owns = "CLI entrypoints and command wiring."
+allowed_workspace_imports = []
+allowed_legacy_imports = ["bpg"]
