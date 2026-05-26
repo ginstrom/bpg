@@ -28,13 +28,22 @@ from bpg.compiler.ir import (
     resolve_typedef,
 )
 from bpg.compiler.normalize import normalize_process
-from bpg.compiler.parser import ParseError, parse_process_file
+from bpg.compiler.parser import ParseError, parse_process_file, parse_process_spec_v2_file
+from bpg.compiler.spec_v2 import (
+    CapabilityRequirementsSummary,
+    CompiledProcessSpecV2,
+    NodeExecutionPlanV2,
+    ProcessExecutionPlanV2,
+    compile_process_spec_v2,
+    validate_process_spec_v2,
+)
 from bpg.compiler.validator import ValidationError, validate_process
 
 __all__ = [
     "ParseError",
     "ValidationError",
     "parse_process_file",
+    "parse_process_spec_v2_file",
     "validate_process",
     "ExecutionIR",
     "ProcessSpecIR",
@@ -46,6 +55,12 @@ __all__ = [
     "ResolvedNode",
     "ResolvedTypeDef",
     "compile_process",
+    "validate_process_spec_v2",
+    "compile_process_spec_v2",
+    "NodeExecutionPlanV2",
+    "ProcessExecutionPlanV2",
+    "CapabilityRequirementsSummary",
+    "CompiledProcessSpecV2",
     "build_process_spec_ir",
     "normalize_process",
     "parse_field_type",

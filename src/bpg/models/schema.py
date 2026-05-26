@@ -8,7 +8,7 @@ enforce the spec's "types are immutable once published" guarantee.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel
 
@@ -121,6 +121,84 @@ class RetryPolicy(_ImmutableModel):
         default_factory=list,
         description="List of provider error codes that should trigger a retry.",
     )
+
+
+# ---------------------------------------------------------------------------
+# Process Spec V2
+# ---------------------------------------------------------------------------
+
+class NodeRef(_ImmutableModel):
+    """Reference to a discoverable node package export."""
+
+    package: str = Field(
+        description="Stable package identifier, e.g. 'bpg.nodes.slack.approval@v1'.",
+        pattern=r"^bpg\.nodes(?:\.[a-z0-9_]+)+@v[0-9]+$",
+    )
+    node: str = Field(
+        description="Exported node identifier within the package.",
+        pattern=r"^[a-zA-Z][a-zA-Z0-9_.-]*$",
+    )
+
+
+class ApprovalPolicyV2(_ImmutableModel):
+    """Framework-owned approval semantics for a node."""
+
+    required: bool = Field(default=True)
+    reviewers: List[str] = Field(default_factory=list)
+
+
+class CompensationPolicyV2(_ImmutableModel):
+    """Framework-owned compensation semantics for a node."""
+
+    strategy: str = Field(pattern=r"^(none|run_node)$")
+    node: Optional[str] = Field(default=None)
+
+
+class ObservabilityPolicyV2(_ImmutableModel):
+    """Observability requirements attached to a node."""
+
+    span_name: Optional[str] = None
+    emit_input: bool = Field(default=True)
+    emit_output: bool = Field(default=True)
+
+
+class ProcessNodeSpecV2(_ImmutableModel):
+    """A process node referenced through a package export."""
+
+    ref: NodeRef
+    config: Dict[str, Any] = Field(default_factory=dict)
+    retry: Optional[RetryPolicy] = Field(default=None)
+    timeout: Optional[str] = Field(default=None)
+    approval: Optional[ApprovalPolicyV2] = Field(default=None)
+    compensation: Optional[CompensationPolicyV2] = Field(default=None)
+    observability: Optional[ObservabilityPolicyV2] = Field(default=None)
+
+
+class ProcessEdgeSpecV2(_ImmutableModel):
+    """A directed edge between v2 process nodes."""
+
+    source: str = Field(alias="from")
+    target: str = Field(alias="to")
+    when: Optional[str] = Field(default=None)
+    mapping: Optional[Dict[str, Any]] = Field(alias="with", default=None)
+
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+
+
+class ProcessBodyV2(_ImmutableModel):
+    """Top-level body of the process spec v2 document."""
+
+    name: str
+    trigger: str
+    nodes: Dict[str, ProcessNodeSpecV2]
+    edges: List[ProcessEdgeSpecV2] = Field(default_factory=list)
+
+
+class ProcessSpecV2(_ImmutableModel):
+    """Framework-owned process spec schema v2."""
+
+    schema_version: Literal[2]
+    process: ProcessBodyV2
 
 
 # ---------------------------------------------------------------------------
