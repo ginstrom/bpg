@@ -28,8 +28,30 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "bpg-core",
+    "bpg-sdk",
+    "bpg-temporal",
+    "bpg-langgraph",
+    "bpg-cli",
+    "pytest>=9.0.0",
     "pytest-cov>=7.0.0",
 ]
+
+[tool.uv.workspace]
+members = [
+    "packages/bpg-core",
+    "packages/bpg-sdk",
+    "packages/bpg-temporal",
+    "packages/bpg-langgraph",
+    "packages/bpg-cli",
+]
+
+[tool.uv.sources]
+bpg-core = { workspace = true }
+bpg-sdk = { workspace = true }
+bpg-temporal = { workspace = true }
+bpg-langgraph = { workspace = true }
+bpg-cli = { workspace = true }
 
 [tool.pytest.ini_options]
 markers = [

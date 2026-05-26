@@ -25,7 +25,7 @@ from bpg.providers.slack_interactive import SlackInteractiveProvider
 from bpg.runtime.langgraph_runtime import LangGraphRuntime
 from bpg.state.store import StateStore, StateStoreError
 
-_PROCESS_FILE = Path("/home/ryan/play/bpg/process.bpg.yaml")
+_PROCESS_FILE = Path(__file__).resolve().parents[1] / "process.bpg.yaml"
 
 _FAKE_TS = "1234567890.000001"
 
