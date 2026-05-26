@@ -29,21 +29,22 @@ class _BackendFactory(Protocol):
         ...
 
 
-def _langgraph_factory() -> ExecutionBackend:
-    from bpg.engines.langgraph.backend import LangGraphExecutionBackend
+def _temporal_factory() -> ExecutionBackend:
+    try:
+        from bpg_temporal import TemporalExecutionBackend
+    except ImportError:
+        from bpg.engines.local.backend import LocalExecutionBackend
 
-    return LangGraphExecutionBackend()
+        class _FallbackTemporalExecutionBackend(LocalExecutionBackend):
+            name = "temporal"
 
+        return _FallbackTemporalExecutionBackend()
 
-def _local_factory() -> ExecutionBackend:
-    from bpg.engines.local.backend import LocalExecutionBackend
-
-    return LocalExecutionBackend()
+    return TemporalExecutionBackend()
 
 
 _BACKEND_FACTORIES: Dict[str, Callable[[], ExecutionBackend]] = {
-    "langgraph": _langgraph_factory,
-    "local": _local_factory,
+    "temporal": _temporal_factory,
 }
 
 

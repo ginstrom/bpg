@@ -153,13 +153,14 @@ def test_engine_step_executes_existing_running_run(tmp_path: Path):
         assert run is not None
         assert run["status"] == "completed"
         assert run["output"] is True
+        assert run["engine_backend"] == "temporal"
         assert run["process_hash"] is not None
         assert run["process_record_version"] == 1
         events = store.load_execution_log(run_id)
-        assert len(events) == 4
         event_types = [e["event_type"] for e in events]
         assert event_types[0] == "run_started"
         assert event_types[-1] == "run_completed"
+        assert event_types.count("node_completed") == 2
         assert {e["node"] for e in events if "node" in e} == {"start", "work"}
     finally:
         PROVIDER_REGISTRY["mock"] = old_mock

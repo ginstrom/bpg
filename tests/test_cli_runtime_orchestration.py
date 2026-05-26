@@ -221,7 +221,7 @@ edges: []
                 "--input",
                 str(input_file),
                 "--engine",
-                "local",
+                "temporal",
             ],
         )
         assert run_result.exit_code == 0
@@ -229,7 +229,7 @@ edges: []
         store = StateStore(state_dir)
         runs = store.list_runs(process_name="backend-test")
         assert runs
-        assert runs[0]["engine_backend"] == "local"
+        assert runs[0]["engine_backend"] == "temporal"
     finally:
         PROVIDER_REGISTRY.clear()
         PROVIDER_REGISTRY.update(registry_snapshot)

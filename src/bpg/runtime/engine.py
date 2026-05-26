@@ -39,7 +39,7 @@ class Engine:
     materialization.
     """
 
-    def __init__(self, process: Process, state_store: Any, backend: str = "langgraph") -> None:
+    def __init__(self, process: Process, state_store: Any, backend: str = "temporal") -> None:
         self._process = process
         self._state_store = state_store
         self._backend_name = backend
@@ -162,7 +162,12 @@ class Engine:
             normalized_entry = normalize_event(entry, run_id=run_id)
             self._state_store.append_execution_event(run_id, normalized_entry)
             if node_name:
-                self._state_store.save_node_record(run_id, node_name, entry)
+                node_record = dict(entry)
+                node_record.setdefault(
+                    "timestamp",
+                    node_record.get("completed_at") or node_record.get("started_at"),
+                )
+                self._state_store.save_node_record(run_id, node_name, node_record)
 
         run_status = final_state.get("run_status", "completed")
         updates = {

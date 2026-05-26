@@ -1407,9 +1407,9 @@ def run(
         exists=False,
     ),
     engine: str = typer.Option(
-        "langgraph",
+        "temporal",
         "--engine",
-        help="Execution backend to use (langgraph or local).",
+        help="Execution backend to use. The framework runtime supports only 'temporal'.",
     ),
 ) -> None:
     """Trigger a new run of a deployed process with an input payload."""

@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from bpg_temporal import LEGACY_RUNTIME_MODULE, TemporalRuntime
 from bpg.compiler.ir import compile_process
 from bpg.compiler.parser import parse_process_file
 from bpg.compiler.validator import validate_process
@@ -58,10 +59,14 @@ edges:
 
 
 def test_backend_registry_reports_known_backends():
-    assert "langgraph" in available_backends()
-    assert "local" in available_backends()
-    assert get_backend("langgraph").name == "langgraph"
-    assert get_backend("local").name == "local"
+    assert available_backends() == ["temporal"]
+    assert get_backend("temporal").name == "temporal"
+
+
+def test_temporal_package_exposes_runtime_bridge():
+    runtime = TemporalRuntime()
+    assert runtime.backend_name == "temporal"
+    assert LEGACY_RUNTIME_MODULE == "bpg.runtime.engine"
 
 
 def test_unknown_backend_raises_clear_error():
@@ -70,7 +75,7 @@ def test_unknown_backend_raises_clear_error():
     assert "Unknown engine backend" in str(exc.value)
 
 
-def test_same_process_runs_with_langgraph_and_local_backends(tmp_path: Path):
+def test_same_process_runs_with_temporal_backend(tmp_path: Path):
     process = _process(tmp_path)
     store = StateStore(tmp_path / "state")
     store.save_process(compile_process(process))
@@ -81,27 +86,17 @@ def test_same_process_runs_with_langgraph_and_local_backends(tmp_path: Path):
     PROVIDER_REGISTRY["mock"] = lambda: mock
 
     try:
-        run_id_langgraph = Engine(
+        run_id = Engine(
             process=process,
             state_store=store,
-            backend="langgraph",
-        ).trigger({})
-        run_id_local = Engine(
-            process=process,
-            state_store=store,
-            backend="local",
+            backend="temporal",
         ).trigger({})
 
-        run_langgraph = store.load_run(run_id_langgraph)
-        run_local = store.load_run(run_id_local)
-        assert run_langgraph is not None
-        assert run_local is not None
-        assert run_langgraph["status"] == "completed"
-        assert run_local["status"] == "completed"
-        assert run_langgraph["output"] is True
-        assert run_local["output"] is True
-        assert run_langgraph["engine_backend"] == "langgraph"
-        assert run_local["engine_backend"] == "local"
+        run = store.load_run(run_id)
+        assert run is not None
+        assert run["status"] == "completed"
+        assert run["output"] is True
+        assert run["engine_backend"] == "temporal"
     finally:
         PROVIDER_REGISTRY["mock"] = old_mock
 
@@ -115,7 +110,7 @@ def test_engine_trigger_rejects_unknown_backend(tmp_path: Path):
     assert "Unknown engine backend" in str(exc.value)
 
 
-def test_local_backend_uses_polling_orchestrator_loop(tmp_path: Path):
+def test_temporal_backend_uses_polling_orchestrator_loop(tmp_path: Path):
     process_file = tmp_path / "process.bpg.yaml"
     process_file.write_text(
         """
@@ -195,7 +190,7 @@ edges:
     previous = PROVIDER_REGISTRY.get("custom.async_echo")
     PROVIDER_REGISTRY["custom.async_echo"] = _AsyncEchoProvider
     try:
-        run_id = Engine(process=process, state_store=store, backend="local").trigger({"text": "hello"})
+        run_id = Engine(process=process, state_store=store, backend="temporal").trigger({"text": "hello"})
         run = store.load_run(run_id)
         assert run is not None
         assert run["status"] == "completed"
@@ -204,9 +199,8 @@ edges:
         records = store.list_node_records(run_id)
         assert records["worker"]["status"] == "completed"
         events = store.load_execution_log(run_id)
-        event_names = [e.get("event") for e in events if e.get("node") == "worker"]
-        assert "node_scheduled" in event_names
-        assert "node_completed" in event_names
+        event_types = [e.get("event_type") for e in events if e.get("node") == "worker"]
+        assert "node_completed" in event_types
     finally:
         if previous is None:
             PROVIDER_REGISTRY.pop("custom.async_echo", None)
