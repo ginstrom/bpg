@@ -1,3 +1,4 @@
+import builtins
 from pathlib import Path
 
 import pytest
@@ -61,6 +62,8 @@ edges:
 def test_backend_registry_reports_known_backends():
     assert available_backends() == ["temporal"]
     assert get_backend("temporal").name == "temporal"
+    assert get_backend("local").name == "temporal"
+    assert get_backend("langgraph").name == "temporal"
 
 
 def test_temporal_package_exposes_runtime_bridge():
@@ -73,6 +76,21 @@ def test_unknown_backend_raises_clear_error():
     with pytest.raises(ValueError) as exc:
         get_backend("does-not-exist")
     assert "Unknown engine backend" in str(exc.value)
+
+
+def test_temporal_factory_reraises_nested_import_errors(monkeypatch: pytest.MonkeyPatch):
+    real_import = builtins.__import__
+
+    def _fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "bpg_temporal":
+            raise ModuleNotFoundError("No module named 'transitive_dep'", name="transitive_dep")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", _fake_import)
+
+    with pytest.raises(ModuleNotFoundError) as exc:
+        get_backend("temporal")
+    assert exc.value.name == "transitive_dep"
 
 
 def test_same_process_runs_with_temporal_backend(tmp_path: Path):
@@ -99,6 +117,59 @@ def test_same_process_runs_with_temporal_backend(tmp_path: Path):
         assert run["engine_backend"] == "temporal"
     finally:
         PROVIDER_REGISTRY["mock"] = old_mock
+
+
+def test_temporal_fallback_backend_preserves_cached_results(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    process = _process(tmp_path)
+    store = StateStore(tmp_path / "state")
+    store.save_process(compile_process(process))
+
+    mock = MockProvider()
+    mock.set_default({"ok": True})
+    old_mock = PROVIDER_REGISTRY["mock"]
+    PROVIDER_REGISTRY["mock"] = lambda: mock
+    real_import = builtins.__import__
+
+    def _fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "bpg_temporal":
+            raise ModuleNotFoundError("No module named 'bpg_temporal'", name="bpg_temporal")
+        return real_import(name, globals, locals, fromlist, level)
+
+    try:
+        engine = Engine(process=process, state_store=store, backend="temporal")
+        run_id = engine.trigger({})
+        initial_calls = len(mock.calls)
+        assert initial_calls >= 1
+
+        store.update_run(run_id, {"status": "running"})
+        monkeypatch.setattr(builtins, "__import__", _fake_import)
+
+        engine.step(run_id)
+        assert len(mock.calls) == initial_calls
+        run = store.load_run(run_id)
+        assert run is not None
+        assert run["status"] == "completed"
+        assert run["engine_backend"] == "temporal"
+    finally:
+        PROVIDER_REGISTRY["mock"] = old_mock
+
+
+def test_temporal_runtime_raises_required_provider_init_errors(tmp_path: Path):
+    process = _process(tmp_path)
+    previous_mock = PROVIDER_REGISTRY["mock"]
+    PROVIDER_REGISTRY["mock"] = lambda: (_ for _ in ()).throw(RuntimeError("missing MOCK_API_KEY"))
+
+    try:
+        with pytest.raises(RuntimeError) as exc:
+            TemporalRuntime().build_workflow(process=process)
+        assert "Failed to initialize provider(s) required by the process" in str(exc.value)
+        assert "mock" in str(exc.value)
+        assert "missing MOCK_API_KEY" in str(exc.value)
+    finally:
+        PROVIDER_REGISTRY["mock"] = previous_mock
 
 
 def test_engine_trigger_rejects_unknown_backend(tmp_path: Path):

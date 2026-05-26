@@ -44,11 +44,33 @@ class TemporalRuntime:
         cached_results: Dict[str, Dict[str, Any]] | None = None,
     ) -> BpgWorkflow:
         providers: Dict[str, Any] = {}
+        provider_init_failures: Dict[str, Exception] = {}
+        required_provider_ids = {
+            node_type.provider
+            for node_type in process.node_types.values()
+        }
         for provider_id, factory in PROVIDER_REGISTRY.items():
             try:
                 providers[provider_id] = factory()
-            except Exception:
-                continue
+            except Exception as exc:
+                provider_init_failures[provider_id] = exc
+
+        required_failures = {
+            provider_id: exc
+            for provider_id, exc in provider_init_failures.items()
+            if provider_id in required_provider_ids
+        }
+        if required_failures:
+            details = ", ".join(
+                f"{provider_id}: {type(exc).__name__}: {exc}"
+                for provider_id, exc in sorted(required_failures.items())
+            )
+            first_error = next(iter(required_failures.values()))
+            raise RuntimeError(
+                "Failed to initialize provider(s) required by the process: "
+                f"{details}"
+            ) from first_error
+
         return BpgWorkflow(
             process=process,
             providers=providers,
