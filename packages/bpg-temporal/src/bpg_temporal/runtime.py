@@ -1,12 +1,150 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from typing import Any, Dict
+import uuid
 
+from bpg_langgraph import (
+    CheckpointBlobStore,
+    CheckpointPolicy,
+    InMemoryCheckpointBlobStore,
+    LangGraphBehavior,
+    LangGraphNodeCheckpoint,
+    LangGraphNodeMetadata,
+    LangGraphNodeRunResult,
+)
 from bpg.compiler.ir import compile_process
 from bpg.compiler.validator import validate_process
 from bpg.providers import PROVIDER_REGISTRY
 from bpg.runtime.langgraph_runtime import LangGraphRuntime
+
+
+class LangGraphNodeWorkflow:
+    """Temporal-owned child workflow contract for a LangGraph-backed node."""
+
+    def __init__(
+        self,
+        *,
+        behavior: LangGraphBehavior,
+        metadata: LangGraphNodeMetadata,
+        blob_store: InMemoryCheckpointBlobStore | None = None,
+    ) -> None:
+        self._behavior = behavior
+        self._metadata = metadata
+        self._blob_store = blob_store or InMemoryCheckpointBlobStore()
+        self._checkpoints: dict[str, LangGraphNodeCheckpoint] = {}
+
+    def run(
+        self,
+        *,
+        input_payload: Dict[str, Any],
+        run_id: str,
+        max_steps: int | None = None,
+    ) -> LangGraphNodeRunResult:
+        return self._drive(
+            state=dict(input_payload),
+            run_id=run_id,
+            next_step_index=0,
+            max_steps=max_steps,
+        )
+
+    def resume(
+        self,
+        *,
+        run_id: str,
+        checkpoint_id: str,
+        max_steps: int | None = None,
+    ) -> LangGraphNodeRunResult:
+        checkpoint = self._checkpoints[checkpoint_id]
+        if checkpoint.run_id != run_id:
+            raise ValueError(
+                f"Checkpoint {checkpoint_id!r} belongs to run {checkpoint.run_id!r}, not {run_id!r}"
+            )
+        state = self._materialize_state(checkpoint)
+        return self._drive(
+            state=state,
+            run_id=run_id,
+            next_step_index=checkpoint.step_index,
+            max_steps=max_steps,
+        )
+
+    def _drive(
+        self,
+        *,
+        state: Dict[str, Any],
+        run_id: str,
+        next_step_index: int,
+        max_steps: int | None,
+    ) -> LangGraphNodeRunResult:
+        executed_steps = 0
+        current_state = dict(state)
+
+        while True:
+            step_result = self._behavior.step(
+                state=current_state,
+                metadata=self._metadata,
+                run_id=run_id,
+                step_index=next_step_index,
+            )
+            current_state = dict(step_result.state)
+            next_step_index += 1
+            executed_steps += 1
+
+            if step_result.completed:
+                return LangGraphNodeRunResult(
+                    completed=True,
+                    state=current_state,
+                    output=step_result.output,
+                )
+
+            if max_steps is not None and executed_steps >= max_steps:
+                checkpoint = self._save_checkpoint(
+                    run_id=run_id,
+                    step_index=next_step_index,
+                    state=current_state,
+                )
+                return LangGraphNodeRunResult(
+                    completed=False,
+                    state=current_state,
+                    checkpoint=checkpoint,
+                )
+
+    def _save_checkpoint(
+        self,
+        *,
+        run_id: str,
+        step_index: int,
+        state: Dict[str, Any],
+    ) -> LangGraphNodeCheckpoint:
+        checkpoint_id = f"lgcp-{uuid.uuid4()}"
+        encoded = json.dumps(state, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        policy = self._metadata.checkpoint
+
+        if policy.spill_to_blob and len(encoded) > policy.max_inline_bytes:
+            blob_key = self._blob_store.put_json(state)
+            checkpoint = LangGraphNodeCheckpoint(
+                checkpoint_id=checkpoint_id,
+                run_id=run_id,
+                step_index=step_index,
+                blob_key=blob_key,
+            )
+        else:
+            checkpoint = LangGraphNodeCheckpoint(
+                checkpoint_id=checkpoint_id,
+                run_id=run_id,
+                step_index=step_index,
+                state=dict(state),
+            )
+        self._checkpoints[checkpoint_id] = checkpoint
+        return checkpoint
+
+    def _materialize_state(self, checkpoint: LangGraphNodeCheckpoint) -> Dict[str, Any]:
+        if checkpoint.state is not None:
+            return dict(checkpoint.state)
+        if checkpoint.blob_key is None:
+            raise ValueError(f"Checkpoint {checkpoint.checkpoint_id!r} has no stored state")
+        return self._blob_store.get_json(checkpoint.blob_key)
 
 
 @dataclass(slots=True)
@@ -36,6 +174,22 @@ class TemporalRuntime:
     """
 
     backend_name = "temporal"
+
+    def build_langgraph_node_workflow(
+        self,
+        *,
+        behavior: LangGraphBehavior,
+        metadata: LangGraphNodeMetadata | None = None,
+        blob_store: CheckpointBlobStore | None = None,
+    ) -> LangGraphNodeWorkflow:
+        return LangGraphNodeWorkflow(
+            behavior=behavior,
+            metadata=metadata or LangGraphNodeMetadata(
+                engine="langgraph",
+                checkpoint=CheckpointPolicy(),
+            ),
+            blob_store=blob_store,
+        )
 
     def build_workflow(
         self,

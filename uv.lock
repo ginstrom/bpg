@@ -110,6 +110,12 @@ source = { editable = "packages/bpg-sdk" }
 name = "bpg-temporal"
 version = "0.1.0"
 source = { editable = "packages/bpg-temporal" }
+dependencies = [
+    { name = "bpg-langgraph" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "bpg-langgraph", editable = "packages/bpg-langgraph" }]
 
 [[package]]
 name = "certifi"
