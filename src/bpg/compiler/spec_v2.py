@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import heapq
+from typing import Any, Mapping
 
 from bpg.models.schema import (
     ApprovalPolicyV2,
@@ -92,7 +93,11 @@ def _topologically_sorted_node_ids(spec: ProcessSpecV2) -> list[str]:
     return ordered
 
 
-def validate_process_spec_v2(spec: ProcessSpecV2) -> None:
+def validate_process_spec_v2(
+    spec: ProcessSpecV2,
+    *,
+    node_catalog: Mapping[tuple[str, str], Any] | None = None,
+) -> None:
     """Validate graph shape and framework-owned semantics for process spec v2."""
     nodes = spec.process.nodes
     if spec.process.trigger not in nodes:
@@ -131,6 +136,15 @@ def validate_process_spec_v2(spec: ProcessSpecV2) -> None:
         )
 
     for node_id, node in nodes.items():
+        if node_catalog is not None and (node.ref.package, node.ref.node) not in node_catalog:
+            raise ValidationError(
+                f"Node {node_id!r} references undiscovered package export "
+                f"{node.ref.package}:{node.ref.node}",
+                node=node_id,
+                field="process.nodes",
+                path=f"$.process.nodes.{node_id}.ref",
+                code="E_NODE_REF_UNDISCOVERED",
+            )
         compensation = node.compensation
         if compensation and compensation.strategy == "run_node":
             if not compensation.node:
@@ -153,9 +167,13 @@ def validate_process_spec_v2(spec: ProcessSpecV2) -> None:
     _topologically_sorted_node_ids(spec)
 
 
-def compile_process_spec_v2(spec: ProcessSpecV2) -> CompiledProcessSpecV2:
+def compile_process_spec_v2(
+    spec: ProcessSpecV2,
+    *,
+    node_catalog: Mapping[tuple[str, str], Any] | None = None,
+) -> CompiledProcessSpecV2:
     """Compile process spec v2 into execution and capability IR."""
-    validate_process_spec_v2(spec)
+    validate_process_spec_v2(spec, node_catalog=node_catalog)
 
     sorted_node_ids = _topologically_sorted_node_ids(spec)
     plan_nodes = tuple(
