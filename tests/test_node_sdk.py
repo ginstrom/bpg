@@ -18,6 +18,10 @@ from bpg_sdk.discovery import DiscoveryError, discover_nodes
 from bpg_sdk.manifest import Idempotency, NodeManifest, ObservabilitySupport, RetrySafety, SideEffects
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+BPG_SDK_PACKAGE = REPO_ROOT / "packages" / "bpg-sdk"
+
+
 @node(
     package="bpg.nodes.tests.echo@v1",
     node_id="echo",
@@ -203,12 +207,12 @@ def test_entry_point_resolution_in_clean_uv_virtualenv(tmp_path: Path) -> None:
     )
 
     venv_dir = tmp_path / ".venv"
-    subprocess.run(["uv", "venv", str(venv_dir)], check=True, cwd="/home/ryan/dev/bpg")
+    subprocess.run(["uv", "venv", str(venv_dir)], check=True, cwd=REPO_ROOT)
     python_bin = venv_dir / "bin" / "python"
     subprocess.run(
-        ["uv", "pip", "install", "--python", str(python_bin), "-e", "/home/ryan/dev/bpg/packages/bpg-sdk", "-e", str(package_dir)],
+        ["uv", "pip", "install", "--python", str(python_bin), "-e", str(BPG_SDK_PACKAGE), "-e", str(package_dir)],
         check=True,
-        cwd="/home/ryan/dev/bpg",
+        cwd=REPO_ROOT,
     )
 
     probe = textwrap.dedent(
@@ -225,7 +229,7 @@ def test_entry_point_resolution_in_clean_uv_virtualenv(tmp_path: Path) -> None:
         check=True,
         capture_output=True,
         text=True,
-        cwd="/home/ryan/dev/bpg",
+        cwd=REPO_ROOT,
     )
 
     assert json.loads(result.stdout) == [["bpg.nodes.demo.echo@v1", "echo"]]
