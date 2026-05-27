@@ -16,7 +16,10 @@ from bpg_sdk.manifest import (
 class Node(ABC):
     """Base class for stateful or advanced node implementations."""
 
-    manifest: NodeManifest
+    @property
+    @abstractmethod
+    def manifest(self) -> NodeManifest:
+        """Canonical metadata for this node."""
 
     @abstractmethod
     def run(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -28,8 +31,12 @@ class FunctionNode(Node):
 
     def __init__(self, func: Callable[[dict[str, Any]], dict[str, Any]], manifest: NodeManifest) -> None:
         self._func = func
-        self.manifest = manifest
+        self._manifest = manifest
         update_wrapper(self, func)
+
+    @property
+    def manifest(self) -> NodeManifest:
+        return self._manifest
 
     def __call__(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.run(payload)

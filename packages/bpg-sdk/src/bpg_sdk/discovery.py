@@ -20,20 +20,31 @@ class DiscoveredNode:
     implementation: Node
 
 
-def _iter_group_entry_points():
-    discovered = entry_points(group=ENTRY_POINT_GROUP)
-    if isinstance(discovered, (tuple, list)):
-        return list(discovered)
-    return list(discovered)
+def _iter_group_entry_points() -> list:
+    return list(entry_points(group=ENTRY_POINT_GROUP))
 
 
 def _coerce_node(exported: object, entry_point_value: str) -> Node:
+    """Coerce an entry-point export to a Node instance.
+
+    Accepts either a Node instance (preferred) or a Node subclass with a
+    no-argument constructor. Subclasses that require constructor arguments
+    must be pre-instantiated and exported as an instance.
+    """
     if isinstance(exported, Node):
         return exported
     if isinstance(exported, type) and issubclass(exported, Node):
-        return exported()
+        try:
+            return exported()
+        except Exception as exc:
+            raise DiscoveryError(
+                f"Entry point {entry_point_value!r} resolved to class "
+                f"{exported.__name__!r} but instantiation failed: {exc}. "
+                "Export a pre-instantiated Node instead."
+            ) from exc
     raise DiscoveryError(
-        f"Entry point {entry_point_value!r} must resolve to a Node instance or Node subclass."
+        f"Entry point {entry_point_value!r} must resolve to a Node instance or "
+        "a Node subclass with a no-argument constructor."
     )
 
 
@@ -42,7 +53,13 @@ def discover_nodes() -> dict[tuple[str, str], DiscoveredNode]:
 
     catalog: dict[tuple[str, str], DiscoveredNode] = {}
     for ep in _iter_group_entry_points():
-        node_impl = _coerce_node(ep.load(), ep.value)
+        try:
+            exported = ep.load()
+        except Exception as exc:
+            raise DiscoveryError(
+                f"Failed to load entry point {ep.value!r}: {exc}"
+            ) from exc
+        node_impl = _coerce_node(exported, ep.value)
         manifest = node_impl.manifest
         if ep.name != manifest.node_id:
             raise DiscoveryError(

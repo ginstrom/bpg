@@ -14,8 +14,10 @@ from bpg.compiler.parser import parse_process_spec_v2_file
 from bpg.compiler.spec_v2 import compile_process_spec_v2, validate_process_spec_v2
 from bpg.compiler.validator import ValidationError
 from bpg_sdk import Node, node
-from bpg_sdk.discovery import DiscoveryError, discover_nodes
+from bpg_sdk.discovery import DiscoveredNode, DiscoveryError, discover_nodes
+from bpg_sdk.langgraph import build_langgraph_registration
 from bpg_sdk.manifest import Idempotency, NodeManifest, ObservabilitySupport, RetrySafety, SideEffects
+from bpg_sdk.temporal import build_temporal_activity_registry
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -128,6 +130,50 @@ def test_discover_nodes_rejects_mismatched_entry_point_name(monkeypatch: pytest.
         discover_nodes()
 
 
+def test_discover_nodes_wraps_load_failure_as_discovery_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _BrokenEntryPoint:
+        name = "echo"
+        value = "broken_pkg:echo"
+        group = "bpg.nodes"
+
+        def load(self):
+            raise ImportError("no module named broken_pkg")
+
+    monkeypatch.setattr("bpg_sdk.discovery.entry_points", lambda group=None: [_BrokenEntryPoint()])
+
+    with pytest.raises(DiscoveryError, match="broken_pkg:echo"):
+        discover_nodes()
+
+
+def test_discover_nodes_wraps_instantiation_failure_as_discovery_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _RequiresArgs(Node):
+        manifest = NodeManifest(
+            package="bpg.nodes.tests.argnode@v1",
+            node_id="argnode",
+            input_schema={"type": "object"},
+            output_schema={"type": "object"},
+        )
+
+        def __init__(self, required_arg: str) -> None:
+            self._arg = required_arg
+
+        def run(self, payload: dict[str, object]) -> dict[str, object]:
+            return payload
+
+    module_name = "tests_fake_node_sdk_argnode"
+    module = types.ModuleType(module_name)
+    module.RequiresArgs = _RequiresArgs
+    sys.modules[module_name] = module
+
+    fake_entry_points = [
+        EntryPoint(name="argnode", value=f"{module_name}:RequiresArgs", group="bpg.nodes"),
+    ]
+    monkeypatch.setattr("bpg_sdk.discovery.entry_points", lambda group=None: fake_entry_points)
+
+    with pytest.raises(DiscoveryError, match="RequiresArgs"):
+        discover_nodes()
+
+
 def test_compiler_accepts_discovered_catalog_for_v2_process(tmp_path: Path) -> None:
     process_file = _write_v2_process(
         tmp_path,
@@ -155,6 +201,51 @@ def test_compiler_rejects_unknown_discovered_node_for_v2_process(tmp_path: Path)
 
     with pytest.raises(ValidationError, match="missing"):
         validate_process_spec_v2(spec, node_catalog=catalog)
+
+
+def test_build_temporal_activity_registry_from_dict(monkeypatch: pytest.MonkeyPatch) -> None:
+    catalog = {
+        (_echo.manifest.package, _echo.manifest.node_id): DiscoveredNode(
+            manifest=_echo.manifest, implementation=_echo
+        ),
+        (_UppercaseNode.manifest.package, _UppercaseNode.manifest.node_id): DiscoveredNode(
+            manifest=_UppercaseNode.manifest, implementation=_UppercaseNode()
+        ),
+    }
+    registry = build_temporal_activity_registry(catalog)
+    assert set(registry.keys()) == {
+        "bpg.nodes.tests.echo@v1:echo",
+        "bpg.nodes.tests.text@v1:uppercase",
+    }
+    assert registry["bpg.nodes.tests.echo@v1:echo"].manifest.node_id == "echo"
+
+
+def test_build_temporal_activity_registry_from_iterable() -> None:
+    nodes = [
+        DiscoveredNode(manifest=_echo.manifest, implementation=_echo),
+    ]
+    registry = build_temporal_activity_registry(nodes)
+    assert list(registry.keys()) == ["bpg.nodes.tests.echo@v1:echo"]
+
+
+def test_build_langgraph_registration_defaults() -> None:
+    result = build_langgraph_registration()
+    assert result == {
+        "engine": "langgraph",
+        "tool_registry": [],
+        "structured_output_schema": None,
+    }
+
+
+def test_build_langgraph_registration_with_tools_and_schema() -> None:
+    schema = {"type": "object", "properties": {"answer": {"type": "string"}}}
+    result = build_langgraph_registration(
+        tool_registry=["search", "calculator"],
+        structured_output_schema=schema,
+    )
+    assert result["tool_registry"] == ["search", "calculator"]
+    assert result["structured_output_schema"] == schema
+    assert result["engine"] == "langgraph"
 
 
 def test_entry_point_resolution_in_clean_uv_virtualenv(tmp_path: Path) -> None:
@@ -208,7 +299,7 @@ def test_entry_point_resolution_in_clean_uv_virtualenv(tmp_path: Path) -> None:
 
     venv_dir = tmp_path / ".venv"
     subprocess.run(["uv", "venv", str(venv_dir)], check=True, cwd=REPO_ROOT)
-    python_bin = venv_dir / "bin" / "python"
+    python_bin = venv_dir / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
     subprocess.run(
         ["uv", "pip", "install", "--python", str(python_bin), "-e", str(BPG_SDK_PACKAGE), "-e", str(package_dir)],
         check=True,
