@@ -6,6 +6,7 @@ from typing import Any, Dict
 import uuid
 
 from bpg_langgraph import (
+    CheckpointBlobStore,
     CheckpointPolicy,
     InMemoryCheckpointBlobStore,
     LangGraphBehavior,
@@ -97,12 +98,12 @@ class LangGraphNodeWorkflow:
                     output=step_result.output,
                 )
 
-            checkpoint = self._save_checkpoint(
-                run_id=run_id,
-                step_index=next_step_index,
-                state=current_state,
-            )
             if max_steps is not None and executed_steps >= max_steps:
+                checkpoint = self._save_checkpoint(
+                    run_id=run_id,
+                    step_index=next_step_index,
+                    state=current_state,
+                )
                 return LangGraphNodeRunResult(
                     completed=False,
                     state=current_state,
@@ -179,7 +180,7 @@ class TemporalRuntime:
         *,
         behavior: LangGraphBehavior,
         metadata: LangGraphNodeMetadata | None = None,
-        blob_store: InMemoryCheckpointBlobStore | None = None,
+        blob_store: CheckpointBlobStore | None = None,
     ) -> LangGraphNodeWorkflow:
         return LangGraphNodeWorkflow(
             behavior=behavior,

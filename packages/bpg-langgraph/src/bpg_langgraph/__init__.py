@@ -2,6 +2,7 @@
 
 from bpg.runtime.langgraph_runtime import LangGraphRuntime
 from bpg_langgraph.contract import (
+    CheckpointBlobStore,
     CheckpointPolicy,
     InMemoryCheckpointBlobStore,
     LangGraphBehavior,
@@ -12,6 +13,7 @@ from bpg_langgraph.contract import (
 )
 
 __all__ = [
+    "CheckpointBlobStore",
     "CheckpointPolicy",
     "InMemoryCheckpointBlobStore",
     "LangGraphBehavior",

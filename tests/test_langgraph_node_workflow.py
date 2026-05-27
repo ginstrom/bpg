@@ -102,6 +102,23 @@ def test_langgraph_node_workflow_spills_large_checkpoint_state_to_blob_store():
     assert blob_store.get_json(partial.checkpoint.blob_key)["transcript"] == "x" * 512
 
 
+def test_langgraph_node_workflow_does_not_checkpoint_intermediate_steps_on_completed_run():
+    behavior = _TwoStepBehavior()
+    workflow = LangGraphNodeWorkflow(
+        behavior=behavior,
+        metadata=LangGraphNodeMetadata(engine="langgraph"),
+    )
+
+    result = workflow.run(
+        input_payload={"prompt": "hello"},
+        run_id="run-complete",
+    )
+
+    assert result.completed is True
+    assert result.checkpoint is None
+    assert len(workflow._checkpoints) == 0
+
+
 def test_parse_process_file_preserves_langgraph_node_type_metadata(tmp_path: Path):
     process_file = tmp_path / "process.bpg.yaml"
     process_file.write_text(

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 import uuid
 
 
@@ -18,7 +18,7 @@ class CheckpointPolicy:
 class LangGraphNodeMetadata:
     """Framework-visible metadata for a LangGraph-backed node."""
 
-    engine: str = "langgraph"
+    engine: Literal["langgraph"] = "langgraph"
     checkpoint: CheckpointPolicy = field(default_factory=CheckpointPolicy)
     tool_registry: list[str] = field(default_factory=list)
     structured_output_schema: dict[str, Any] | None = None
