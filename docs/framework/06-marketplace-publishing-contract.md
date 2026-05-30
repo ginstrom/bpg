@@ -1,5 +1,7 @@
 # 06: Marketplace Publishing Contract
 
+Status: Done
+
 ## Goal
 
 Define how node packages and workflow assets are exported into `bpg-marketplace` as machine-readable artifacts.

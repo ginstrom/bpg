@@ -31,6 +31,9 @@ app = typer.Typer(
 providers_app = typer.Typer(help="Provider discovery and metadata.")
 app.add_typer(providers_app, name="providers")
 
+marketplace_app = typer.Typer(help="Marketplace artifact generation and validation.")
+app.add_typer(marketplace_app, name="marketplace")
+
 console = Console()
 err_console = Console(stderr=True, style="bold red")
 
@@ -1593,6 +1596,90 @@ def cleanup(
     except Exception as e:
         err_console.print(f"Error: {e}")
         raise typer.Exit(code=1)
+
+
+@marketplace_app.command("export")
+def marketplace_export(
+    output_dir: Path = typer.Option(
+        Path("marketplace-artifacts"),
+        "--output-dir",
+        "-o",
+        help="Directory to write marketplace artifact files.",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print artifacts without writing files."),
+) -> None:
+    """Export installed node manifests as marketplace-ready artifacts."""
+    from bpg_sdk.discovery import discover_nodes, DiscoveryError
+    from bpg_sdk.marketplace import export_catalog, validate_artifacts, write_artifacts
+
+    try:
+        catalog = discover_nodes()
+    except DiscoveryError as e:
+        err_console.print(f"Discovery error: {e}")
+        raise typer.Exit(code=1)
+
+    artifacts = export_catalog(catalog.values())
+    errors = validate_artifacts(artifacts)
+    if errors:
+        for msg in errors:
+            err_console.print(f"Validation error: {msg}")
+        raise typer.Exit(code=1)
+
+    if dry_run:
+        for artifact in artifacts:
+            console.print(artifact.model_dump_json(indent=2))
+        console.print(f"\n[bold green]✓[/bold green] {len(artifacts)} artifact(s) validated (dry run).")
+        return
+
+    written = write_artifacts(artifacts, output_dir)
+    for path in written:
+        console.print(f"  [cyan]{path}[/cyan]")
+    console.print(
+        f"\n[bold green]✓[/bold green] Wrote {len(written)} artifact(s) to [cyan]{output_dir}[/cyan]."
+    )
+
+
+@marketplace_app.command("validate")
+def marketplace_validate(
+    artifact_dir: Path = typer.Argument(
+        Path("marketplace-artifacts"),
+        help="Directory containing marketplace artifact files to validate.",
+    ),
+) -> None:
+    """Validate marketplace artifact files against the framework schema."""
+    from bpg_sdk.marketplace import load_artifact, validate_artifacts
+
+    if not artifact_dir.exists():
+        err_console.print(f"Artifact directory not found: {artifact_dir}")
+        raise typer.Exit(code=1)
+
+    artifact_files = sorted(artifact_dir.rglob("*.json"))
+    if not artifact_files:
+        err_console.print(f"No artifact files found under {artifact_dir}")
+        raise typer.Exit(code=1)
+
+    artifacts = []
+    load_errors: list[str] = []
+    for path in artifact_files:
+        try:
+            artifacts.append(load_artifact(path))
+        except Exception as e:
+            load_errors.append(f"{path}: {e}")
+
+    if load_errors:
+        for msg in load_errors:
+            err_console.print(f"Load error: {msg}")
+        raise typer.Exit(code=1)
+
+    errors = validate_artifacts(artifacts)
+    if errors:
+        for msg in errors:
+            err_console.print(f"Validation error: {msg}")
+        raise typer.Exit(code=1)
+
+    console.print(
+        f"[bold green]✓[/bold green] {len(artifacts)} artifact(s) valid in [cyan]{artifact_dir}[/cyan]."
+    )
 
 
 if __name__ == "__main__":
