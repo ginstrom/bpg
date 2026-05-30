@@ -19,6 +19,9 @@ Emit OpenTelemetry traces, metrics, and structured logs from Temporal workflows 
 
 Add governance hooks for required approvals, escalation rules, timeout behavior, and policy checks. The framework must be able to block or redirect execution based on those policies before risky actions occur. Dashboard and status APIs should be rebuilt against Temporal visibility plus the framework read model rather than the current append-only event log.
 
+Use red/green TDD for implementation. When complete create a PR after ensuring
+that all tests pass in accordance with @AGENTS.md
+
 ## Public Interfaces
 
 - Approval signal and query contract
