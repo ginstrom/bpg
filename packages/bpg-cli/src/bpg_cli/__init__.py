@@ -1,4 +1,4 @@
-"""CLI import root for the uv workspace split."""
+"""Framework-first CLI package for BPG."""
 
 from bpg_cli.main import app, main
 
