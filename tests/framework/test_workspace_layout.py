@@ -52,7 +52,7 @@ def test_workspace_packages_expose_expected_import_roots() -> None:
 
 
 def test_package_ownership_rules_are_documented() -> None:
-    doc = (REPO_ROOT / "docs" / "framework" / "package-ownership.md").read_text()
+    doc = (REPO_ROOT / "docs" / "reference" / "package_ownership.md").read_text()
     for import_root in EXPECTED_IMPORT_ROOTS.values():
         assert f"`{import_root}`" in doc
 

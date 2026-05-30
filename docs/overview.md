@@ -65,10 +65,45 @@ edges:
       text: trigger.in.text
 ```
 
-## Common mistakes
-- Treating BPG as a generic scripting language instead of a constrained process DSL.
-- Hiding routing logic in providers instead of explicit `edges.when` conditions.
-- Relying on implicit field passing instead of explicit `edge.with` mappings.
+---
+
+# Design Philosophy
+
+## AI systems are operational systems
+
+BPG is built on the core principle that **AI systems are operational systems, not just prompt pipelines.**
+
+The difficult problems in production AI systems are not the LLM generation itself, but the operational concerns surrounding it:
+* Orchestration and state management
+* Retries and error recovery
+* Human-in-the-loop approvals
+* Observability and auditability
+* Deployment and governance
+
+BPG exists to solve these operational problems by treating LLMs as execution components within larger governed workflows.
+
+## Opinionated Semantics, Flexible Integrations
+
+BPG is **strongly opinionated about workflow semantics**. It defines canonical behavior for:
+* Workflow lifecycle and state transitions
+* Retry and compensation logic
+* Pause/resume and human approval flows
+* Execution lineage and audit trails
+
+At the same time, BPG is **flexible about integrations**. It intentionally avoids hard dependencies on specific cloud providers, LLM vendors, or vector databases. It defines the interface contracts, while allowing you to select the implementations (e.g., OpenAI vs. Anthropic, Weaviate vs. OpenSearch).
+
+## System Layers
+
+1. **Workflow Runtime:** Responsible for graph execution, scheduling, and durable state persistence. BPG uses Temporal for reliable, long-running execution.
+2. **Node System:** Nodes are typed, observable units of work with explicit inputs and outputs.
+3. **Observability Layer:** A first-class concern. All workflows and nodes automatically emit traces, metrics, and audit events.
+4. **Human-in-the-loop (HITL):** Human intervention is a first-class orchestration primitive, not an afterthought.
+
+## Node Philosophy
+
+BPG distinguishes between **Core Nodes** (universal fundamental operations like branch, transform, log) and **Extension Packages** (vendor-specific or domain-specific functionality like `bpg-nodes-llm` or `bpg-nodes-weaviate`).
+
+This separation avoids dependency bloat and vendor lock-in while keeping the core framework stable.
 
 ## Related pages
 - [Quickstart](quickstart.md)
