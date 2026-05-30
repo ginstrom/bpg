@@ -105,6 +105,22 @@ dev = [
 name = "bpg-cli"
 version = "0.1.0"
 source = { editable = "packages/bpg-cli" }
+dependencies = [
+    { name = "bpg-sdk" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+    { name = "rich" },
+    { name = "typer" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "bpg-sdk", editable = "packages/bpg-sdk" },
+    { name = "pydantic", specifier = ">=2.12.5" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
+    { name = "rich", specifier = ">=14.3.3" },
+    { name = "typer", specifier = ">=0.24.1" },
+]
 
 [[package]]
 name = "bpg-core"

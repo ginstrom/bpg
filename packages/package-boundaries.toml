@@ -25,7 +25,7 @@ allowed_legacy_imports = ["bpg"]
 [packages.bpg_cli]
 path = "packages/bpg-cli"
 owns = "CLI entrypoints and command wiring."
-allowed_workspace_imports = []
+allowed_workspace_imports = ["bpg_sdk"]
 allowed_legacy_imports = ["bpg"]
 
 [packages.bpg_nodes_core]

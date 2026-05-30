@@ -33,4 +33,4 @@ Marketplace artifacts are metadata plus installable package references, matching
 6. [x] [06-marketplace-publishing-contract.md](06-marketplace-publishing-contract.md): Define marketplace metadata generation, validation, and publish and sync automation.
 7. [x] [07-first-party-node-package-extraction.md](07-first-party-node-package-extraction.md): Extract built-in runnable components into installable first-party node packages.
 8. [x] [08-hitl-observability-and-governance.md](08-hitl-observability-and-governance.md): Rebuild approvals, audit, tracing, and operational controls on Temporal.
-9. [09-cli-examples-and-release-cutover.md](09-cli-examples-and-release-cutover.md): Replace the CLI and dev flows, refresh examples, and cut the first framework release.
+9. [x] [09-cli-examples-and-release-cutover.md](09-cli-examples-and-release-cutover.md): Replace the CLI and dev flows, refresh examples, and cut the first framework release.
