@@ -104,8 +104,6 @@ See [LICENSE](LICENSE), [LICENSE-APACHE](LICENSE-APACHE), and [NOTICE](NOTICE).
 
 - [Overview](docs/overview.md)
 - [Quickstart](docs/quickstart.md)
-- Framework:
-  - [Framework Roadmap](docs/framework/index.md)
 - Concepts:
   - [Process](docs/concepts/process.md)
   - [Nodes](docs/concepts/nodes.md)
@@ -128,11 +126,26 @@ See [LICENSE](LICENSE), [LICENSE-APACHE](LICENSE-APACHE), and [NOTICE](NOTICE).
   - [Type System](docs/reference/type_system.md)
   - [Provider Interface](docs/reference/provider_interface.md)
   - [Error Codes](docs/reference/error_codes.md)
+  - [Release & Versioning](docs/reference/release_versioning.md)
+  - [Package Ownership](docs/reference/package_ownership.md)
 - CLI:
+  - [init](docs/cli/init.md)
+  - [doctor](docs/cli/doctor.md)
   - [plan](docs/cli/plan.md)
   - [apply](docs/cli/apply.md)
-  - [doctor](docs/cli/doctor.md)
   - [run](docs/cli/run.md)
+  - [status](docs/cli/status.md)
+  - [replay](docs/cli/replay.md)
+  - [up](docs/cli/up.md)
+  - [down](docs/cli/down.md)
+  - [logs](docs/cli/logs.md)
+  - [package](docs/cli/package.md)
+  - [fmt](docs/cli/fmt.md)
+  - [test](docs/cli/test.md)
+  - [visualize](docs/cli/visualize.md)
+  - [providers](docs/cli/providers.md)
+  - [suggest-fix](docs/cli/suggest-fix.md)
+  - [apply-patch](docs/cli/apply-patch.md)
 - Patterns:
   - [Approval Workflow](docs/patterns/approval_workflow.md)
   - [Retry Pattern](docs/patterns/retry_pattern.md)
