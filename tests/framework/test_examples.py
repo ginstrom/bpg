@@ -73,12 +73,12 @@ def test_core_parse_sum_input_yaml_exists() -> None:
 
 
 def test_release_versioning_doc_exists() -> None:
-    doc = REPO_ROOT / "docs" / "framework" / "release-versioning.md"
+    doc = REPO_ROOT / "docs" / "reference" / "release_versioning.md"
     assert doc.exists(), f"Expected release versioning doc at {doc}"
 
 
 def test_release_versioning_doc_covers_framework_and_node_packages() -> None:
-    doc = REPO_ROOT / "docs" / "framework" / "release-versioning.md"
+    doc = REPO_ROOT / "docs" / "reference" / "release_versioning.md"
     content = doc.read_text()
     assert "framework" in content.lower()
     assert "node" in content.lower()
@@ -86,6 +86,6 @@ def test_release_versioning_doc_covers_framework_and_node_packages() -> None:
 
 
 def test_release_versioning_doc_mentions_cutover_version() -> None:
-    doc = REPO_ROOT / "docs" / "framework" / "release-versioning.md"
+    doc = REPO_ROOT / "docs" / "reference" / "release_versioning.md"
     content = doc.read_text()
     assert "0.1.0" in content
