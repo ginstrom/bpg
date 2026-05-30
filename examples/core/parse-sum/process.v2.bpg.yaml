@@ -1,0 +1,31 @@
+schema_version: 2
+process:
+  name: parse_sum_email
+  trigger: ingest
+  nodes:
+    ingest:
+      ref:
+        package: bpg.nodes.core@v1
+        node: passthrough
+    parse:
+      ref:
+        package: bpg.nodes.core@v1
+        node: text.parse_numbers
+    sum:
+      ref:
+        package: bpg.nodes.core@v1
+        node: math.sum_numbers
+    email:
+      ref:
+        package: bpg.nodes.comm@v1
+        node: notify.email
+      config:
+        from_addr: robot@example.com
+        dry_run: true
+  edges:
+    - from: ingest
+      to: parse
+    - from: parse
+      to: sum
+    - from: sum
+      to: email

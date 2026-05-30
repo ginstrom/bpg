@@ -9,6 +9,11 @@ This workspace split establishes stable package roots without forcing an immedia
 - `bpg_temporal` is reserved for Temporal runtime integration and currently exposes only transitional placeholders.
 - `bpg_langgraph` owns LangGraph-specific runtime execution support.
 - `bpg_cli` owns CLI entrypoints and command composition.
+- `bpg_nodes_core` owns core data-manipulation and control-flow nodes (passthrough, CSV, flow, text, math).
+- `bpg_nodes_ai` owns AI/LLM nodes backed by Anthropic, OpenAI, Google, and Ollama.
+- `bpg_nodes_human` owns human-in-the-loop and agent pipeline nodes.
+- `bpg_nodes_search` owns vector search, embedding, and web search nodes.
+- `bpg_nodes_comm` owns communication and integration nodes (email, HTTP, Kafka, Slack).
 
 ## Transition Policy
 

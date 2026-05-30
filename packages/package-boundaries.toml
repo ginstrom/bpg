@@ -27,3 +27,33 @@ path = "packages/bpg-cli"
 owns = "CLI entrypoints and command wiring."
 allowed_workspace_imports = []
 allowed_legacy_imports = ["bpg"]
+
+[packages.bpg_nodes_core]
+path = "packages/bpg-nodes-core"
+owns = "Core data-manipulation and control-flow nodes."
+allowed_workspace_imports = ["bpg_sdk"]
+allowed_legacy_imports = []
+
+[packages.bpg_nodes_ai]
+path = "packages/bpg-nodes-ai"
+owns = "AI/LLM nodes (Anthropic, OpenAI, Google, Ollama)."
+allowed_workspace_imports = ["bpg_sdk"]
+allowed_legacy_imports = []
+
+[packages.bpg_nodes_human]
+path = "packages/bpg-nodes-human"
+owns = "Human-in-the-loop and agent pipeline nodes."
+allowed_workspace_imports = ["bpg_sdk"]
+allowed_legacy_imports = []
+
+[packages.bpg_nodes_search]
+path = "packages/bpg-nodes-search"
+owns = "Vector search, embedding, and web search nodes."
+allowed_workspace_imports = ["bpg_sdk"]
+allowed_legacy_imports = []
+
+[packages.bpg_nodes_comm]
+path = "packages/bpg-nodes-comm"
+owns = "Communication and integration nodes (email, HTTP, Kafka, Slack)."
+allowed_workspace_imports = ["bpg_sdk"]
+allowed_legacy_imports = []

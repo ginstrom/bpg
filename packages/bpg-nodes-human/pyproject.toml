@@ -1,0 +1,17 @@
+[project]
+name = "bpg-nodes-human"
+version = "0.1.0"
+description = "Human-in-the-loop and agent pipeline nodes for BPG."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "bpg-sdk",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.17,<0.10.0"]
+build-backend = "uv_build"
+
+[project.entry-points."bpg.nodes"]
+"dashboard.form" = "bpg_nodes_human:dashboard_form"
+"agent.pipeline" = "bpg_nodes_human:agent_pipeline"

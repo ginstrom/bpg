@@ -1,0 +1,20 @@
+[project]
+name = "bpg-nodes-comm"
+version = "0.1.0"
+description = "Communication and integration nodes for BPG (email, HTTP, Kafka, Slack)."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "bpg-sdk",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.17,<0.10.0"]
+build-backend = "uv_build"
+
+[project.entry-points."bpg.nodes"]
+"notify.email" = "bpg_nodes_comm:notify_email"
+"http.gitlab" = "bpg_nodes_comm:http_gitlab"
+"queue.kafka" = "bpg_nodes_comm:queue_kafka"
+"slack.interactive" = "bpg_nodes_comm:slack_interactive"
+"http.webhook" = "bpg_nodes_comm:http_webhook"

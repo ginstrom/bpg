@@ -33,6 +33,11 @@ dev = [
     "bpg-temporal",
     "bpg-langgraph",
     "bpg-cli",
+    "bpg-nodes-core",
+    "bpg-nodes-ai",
+    "bpg-nodes-human",
+    "bpg-nodes-search",
+    "bpg-nodes-comm",
     "pytest>=9.0.0",
     "pytest-cov>=7.0.0",
 ]
@@ -44,6 +49,11 @@ members = [
     "packages/bpg-temporal",
     "packages/bpg-langgraph",
     "packages/bpg-cli",
+    "packages/bpg-nodes-core",
+    "packages/bpg-nodes-ai",
+    "packages/bpg-nodes-human",
+    "packages/bpg-nodes-search",
+    "packages/bpg-nodes-comm",
 ]
 
 [tool.uv.sources]
@@ -52,6 +62,11 @@ bpg-sdk = { workspace = true }
 bpg-temporal = { workspace = true }
 bpg-langgraph = { workspace = true }
 bpg-cli = { workspace = true }
+bpg-nodes-core = { workspace = true }
+bpg-nodes-ai = { workspace = true }
+bpg-nodes-human = { workspace = true }
+bpg-nodes-search = { workspace = true }
+bpg-nodes-comm = { workspace = true }
 
 [tool.pytest.ini_options]
 markers = [
