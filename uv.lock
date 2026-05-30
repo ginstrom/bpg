@@ -8,6 +8,11 @@ members = [
     "bpg-cli",
     "bpg-core",
     "bpg-langgraph",
+    "bpg-nodes-ai",
+    "bpg-nodes-comm",
+    "bpg-nodes-core",
+    "bpg-nodes-human",
+    "bpg-nodes-search",
     "bpg-sdk",
     "bpg-temporal",
 ]
@@ -60,6 +65,11 @@ dev = [
     { name = "bpg-cli" },
     { name = "bpg-core" },
     { name = "bpg-langgraph" },
+    { name = "bpg-nodes-ai" },
+    { name = "bpg-nodes-comm" },
+    { name = "bpg-nodes-core" },
+    { name = "bpg-nodes-human" },
+    { name = "bpg-nodes-search" },
     { name = "bpg-sdk" },
     { name = "bpg-temporal" },
     { name = "pytest" },
@@ -80,6 +90,11 @@ dev = [
     { name = "bpg-cli", editable = "packages/bpg-cli" },
     { name = "bpg-core", editable = "packages/bpg-core" },
     { name = "bpg-langgraph", editable = "packages/bpg-langgraph" },
+    { name = "bpg-nodes-ai", editable = "packages/bpg-nodes-ai" },
+    { name = "bpg-nodes-comm", editable = "packages/bpg-nodes-comm" },
+    { name = "bpg-nodes-core", editable = "packages/bpg-nodes-core" },
+    { name = "bpg-nodes-human", editable = "packages/bpg-nodes-human" },
+    { name = "bpg-nodes-search", editable = "packages/bpg-nodes-search" },
     { name = "bpg-sdk", editable = "packages/bpg-sdk" },
     { name = "bpg-temporal", editable = "packages/bpg-temporal" },
     { name = "pytest", specifier = ">=9.0.0" },
@@ -100,6 +115,61 @@ source = { editable = "packages/bpg-core" }
 name = "bpg-langgraph"
 version = "0.1.0"
 source = { editable = "packages/bpg-langgraph" }
+
+[[package]]
+name = "bpg-nodes-ai"
+version = "0.1.0"
+source = { editable = "packages/bpg-nodes-ai" }
+dependencies = [
+    { name = "bpg-sdk" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "bpg-sdk", editable = "packages/bpg-sdk" }]
+
+[[package]]
+name = "bpg-nodes-comm"
+version = "0.1.0"
+source = { editable = "packages/bpg-nodes-comm" }
+dependencies = [
+    { name = "bpg-sdk" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "bpg-sdk", editable = "packages/bpg-sdk" }]
+
+[[package]]
+name = "bpg-nodes-core"
+version = "0.1.0"
+source = { editable = "packages/bpg-nodes-core" }
+dependencies = [
+    { name = "bpg-sdk" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "bpg-sdk", editable = "packages/bpg-sdk" }]
+
+[[package]]
+name = "bpg-nodes-human"
+version = "0.1.0"
+source = { editable = "packages/bpg-nodes-human" }
+dependencies = [
+    { name = "bpg-sdk" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "bpg-sdk", editable = "packages/bpg-sdk" }]
+
+[[package]]
+name = "bpg-nodes-search"
+version = "0.1.0"
+source = { editable = "packages/bpg-nodes-search" }
+dependencies = [
+    { name = "bpg-sdk" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "bpg-sdk", editable = "packages/bpg-sdk" }]
 
 [[package]]
 name = "bpg-sdk"

@@ -1,0 +1,33 @@
+schema_version: 2
+process:
+  name: search_ingest
+  trigger: start
+  nodes:
+    start:
+      ref:
+        package: bpg.nodes.core@v1
+        node: fs.markdown_list
+    chunk:
+      ref:
+        package: bpg.nodes.core@v1
+        node: text.markdown_chunk
+      config:
+        chunk_size: 1200
+        overlap: 200
+    embed:
+      ref:
+        package: bpg.nodes.search@v1
+        node: embed.text
+    upsert:
+      ref:
+        package: bpg.nodes.search@v1
+        node: weaviate.upsert
+      config:
+        store: search_main
+  edges:
+    - from: start
+      to: chunk
+    - from: chunk
+      to: embed
+    - from: embed
+      to: upsert

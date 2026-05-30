@@ -1682,5 +1682,156 @@ def marketplace_validate(
     )
 
 
+@marketplace_app.command("sync")
+def marketplace_sync(
+    marketplace_dir: Path = typer.Option(
+        Path("../bpg-marketplace"),
+        "--marketplace-dir",
+        "-m",
+        help="Path to the bpg-marketplace repository root.",
+    ),
+    source_repo: str = typer.Option(
+        "https://github.com/ginstrom/bpg",
+        "--source-repo",
+        help="Source repository URL for first-party packages.",
+    ),
+    trust_level: str = typer.Option(
+        "blessed",
+        "--trust-level",
+        help="Trust level for generated entries (community, verified, blessed).",
+    ),
+    rebuild_index: bool = typer.Option(
+        True,
+        "--rebuild-index/--no-rebuild-index",
+        help="Rebuild bpg-marketplace generated indexes after writing.",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print entries without writing files."),
+) -> None:
+    """Sync installed node manifests to the bpg-marketplace registry format."""
+    import re
+    from bpg_sdk.discovery import discover_nodes, DiscoveryError
+    from bpg_sdk.marketplace import export_catalog
+
+    try:
+        catalog = discover_nodes()
+    except DiscoveryError as e:
+        err_console.print(f"Discovery error: {e}")
+        raise typer.Exit(code=1)
+
+    artifacts = export_catalog(catalog.values())
+
+    # Group artifacts by package_id (strip version suffix for registry id)
+    from collections import defaultdict
+    by_package: dict[str, list] = defaultdict(list)
+    for artifact in artifacts:
+        by_package[artifact.package_id].append(artifact)
+
+    _SIDE_EFFECTS_MAP = {
+        "none": [],
+        "reads": ["fs_read"],
+        "writes": ["fs_write"],
+        "external": ["network_io"],
+    }
+    _PACKAGE_DISPLAY_NAMES = {
+        "bpg.nodes.core@v1": "BPG Core Nodes",
+        "bpg.nodes.ai@v1": "BPG AI Nodes",
+        "bpg.nodes.human@v1": "BPG Human Nodes",
+        "bpg.nodes.search@v1": "BPG Search Nodes",
+        "bpg.nodes.comm@v1": "BPG Communication Nodes",
+    }
+
+    def _sanitize_capability(cap: str) -> str:
+        return re.sub(r"[^a-z0-9]", "_", cap.lower()).strip("_")
+
+    def _to_registry_entry(package_id: str, group: list) -> dict:
+        registry_id = package_id.split("@")[0]
+        first = group[0]
+        package_name = first.install.package_name
+        all_caps: list[str] = []
+        seen_caps: set[str] = set()
+        for a in group:
+            for cap in a.capabilities:
+                sanitized = _sanitize_capability(cap)
+                if sanitized and sanitized not in seen_caps:
+                    all_caps.append(sanitized)
+                    seen_caps.add(sanitized)
+        if not all_caps:
+            all_caps = ["general"]
+
+        nodes_list = [
+            {
+                "id": a.node_id,
+                "retryable": a.execution.retry_safety in {"safe", "conditional"},
+                "idempotent": a.execution.idempotency == "idempotent",
+                "side_effects": _SIDE_EFFECTS_MAP.get(a.execution.side_effects, []),
+            }
+            for a in sorted(group, key=lambda x: x.node_id)
+        ]
+
+        display_name = _PACKAGE_DISPLAY_NAMES.get(
+            package_id,
+            " ".join(w.capitalize() for w in registry_id.replace("bpg.nodes.", "").split(".")) + " Nodes",
+        )
+        return {
+            "id": registry_id,
+            "name": display_name,
+            "type": "node_package",
+            "package": {
+                "python": package_name,
+                "install": first.install.uv,
+            },
+            "source": {"repo": source_repo},
+            "capabilities": all_caps,
+            "nodes": nodes_list,
+            "compatibility": {"bpg": ">=0.1.0"},
+            "observability": {"traces": True, "metrics": True},
+            "trust": {"level": trust_level},
+        }
+
+    entries: list[tuple[str, dict]] = []
+    for package_id, group in sorted(by_package.items()):
+        entry = _to_registry_entry(package_id, group)
+        package_name = group[0].install.package_name
+        entries.append((package_name, entry))
+
+    if dry_run:
+        for package_name, entry in entries:
+            console.print(f"\n[bold cyan]{package_name}.json[/bold cyan]")
+            console.print(json.dumps(entry, indent=2))
+        console.print(f"\n[bold green]✓[/bold green] {len(entries)} entry/entries (dry run).")
+        return
+
+    nodes_dir = marketplace_dir / "registry" / "nodes"
+    if not nodes_dir.parent.parent.exists():
+        err_console.print(f"Marketplace directory not found: {marketplace_dir}")
+        raise typer.Exit(code=1)
+    nodes_dir.mkdir(parents=True, exist_ok=True)
+
+    written: list[Path] = []
+    for package_name, entry in entries:
+        path = nodes_dir / f"{package_name}.json"
+        path.write_text(json.dumps(entry, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        written.append(path)
+        console.print(f"  [cyan]{path}[/cyan]")
+
+    console.print(
+        f"\n[bold green]✓[/bold green] Wrote {len(written)} registry entry/entries to "
+        f"[cyan]{nodes_dir}[/cyan]."
+    )
+
+    if rebuild_index:
+        try:
+            import sys as _sys
+            _mp_src = str(marketplace_dir / "src")
+            if _mp_src not in _sys.path:
+                _sys.path.insert(0, _mp_src)
+            from bpg_marketplace.indexer import build_indexes
+            result = build_indexes(root=marketplace_dir)
+            count = len(result["index"]["artifacts"])
+            console.print(f"[bold green]✓[/bold green] Rebuilt marketplace index ({count} artifacts).")
+        except Exception as e:
+            console.print(f"[yellow]⚠[/yellow] Index rebuild skipped: {e}")
+
+
 if __name__ == "__main__":
     app()

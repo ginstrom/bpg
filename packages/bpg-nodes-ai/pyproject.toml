@@ -1,0 +1,20 @@
+[project]
+name = "bpg-nodes-ai"
+version = "0.1.0"
+description = "AI/LLM nodes for BPG (Anthropic, OpenAI, Google, Ollama)."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "bpg-sdk",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.17,<0.10.0"]
+build-backend = "uv_build"
+
+[project.entry-points."bpg.nodes"]
+anthropic = "bpg_nodes_ai:anthropic"
+openai = "bpg_nodes_ai:openai"
+google = "bpg_nodes_ai:google"
+ollama = "bpg_nodes_ai:ollama"
+llm = "bpg_nodes_ai:llm"

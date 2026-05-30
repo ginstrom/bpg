@@ -16,6 +16,11 @@ EXPECTED_WORKSPACE_MEMBERS = [
     "packages/bpg-temporal",
     "packages/bpg-langgraph",
     "packages/bpg-cli",
+    "packages/bpg-nodes-core",
+    "packages/bpg-nodes-ai",
+    "packages/bpg-nodes-human",
+    "packages/bpg-nodes-search",
+    "packages/bpg-nodes-comm",
 ]
 EXPECTED_IMPORT_ROOTS = {
     "packages/bpg-core": "bpg_core",
@@ -23,6 +28,11 @@ EXPECTED_IMPORT_ROOTS = {
     "packages/bpg-temporal": "bpg_temporal",
     "packages/bpg-langgraph": "bpg_langgraph",
     "packages/bpg-cli": "bpg_cli",
+    "packages/bpg-nodes-core": "bpg_nodes_core",
+    "packages/bpg-nodes-ai": "bpg_nodes_ai",
+    "packages/bpg-nodes-human": "bpg_nodes_human",
+    "packages/bpg-nodes-search": "bpg_nodes_search",
+    "packages/bpg-nodes-comm": "bpg_nodes_comm",
 }
 
 

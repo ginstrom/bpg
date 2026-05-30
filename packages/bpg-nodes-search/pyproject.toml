@@ -1,0 +1,19 @@
+[project]
+name = "bpg-nodes-search"
+version = "0.1.0"
+description = "Vector search, embedding, and web search nodes for BPG."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "bpg-sdk",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.17,<0.10.0"]
+build-backend = "uv_build"
+
+[project.entry-points."bpg.nodes"]
+"embed.text" = "bpg_nodes_search:embed_text"
+"weaviate.upsert" = "bpg_nodes_search:weaviate_upsert"
+"weaviate.hybrid_search" = "bpg_nodes_search:weaviate_hybrid_search"
+web_search = "bpg_nodes_search:web_search"

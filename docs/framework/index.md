@@ -31,6 +31,6 @@ Marketplace artifacts are metadata plus installable package references, matching
 4. [x] [04-langgraph-llm-runtime.md](04-langgraph-llm-runtime.md): Add a durable LangGraph execution model for LLM and agent nodes under Temporal.
 5. [x] [05-node-sdk-and-discovery.md](05-node-sdk-and-discovery.md): Introduce the authoring SDK, node metadata contract, and Python entry-point discovery.
 6. [x] [06-marketplace-publishing-contract.md](06-marketplace-publishing-contract.md): Define marketplace metadata generation, validation, and publish and sync automation.
-7. [07-first-party-node-package-extraction.md](07-first-party-node-package-extraction.md): Extract built-in runnable components into installable first-party node packages.
+7. [x] [07-first-party-node-package-extraction.md](07-first-party-node-package-extraction.md): Extract built-in runnable components into installable first-party node packages.
 8. [08-hitl-observability-and-governance.md](08-hitl-observability-and-governance.md): Rebuild approvals, audit, tracing, and operational controls on Temporal.
 9. [09-cli-examples-and-release-cutover.md](09-cli-examples-and-release-cutover.md): Replace the CLI and dev flows, refresh examples, and cut the first framework release.

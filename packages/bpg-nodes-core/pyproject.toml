@@ -1,0 +1,27 @@
+[project]
+name = "bpg-nodes-core"
+version = "0.1.0"
+description = "Core data-manipulation and control-flow nodes for BPG."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "bpg-sdk",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.17,<0.10.0"]
+build-backend = "uv_build"
+
+[project.entry-points."bpg.nodes"]
+passthrough = "bpg_nodes_core:passthrough"
+"dataset.select_rows" = "bpg_nodes_core:dataset_select_rows"
+"csv.read" = "bpg_nodes_core:csv_read"
+"flow.loop" = "bpg_nodes_core:flow_loop"
+"flow.fanout" = "bpg_nodes_core:flow_fanout"
+"flow.await_all" = "bpg_nodes_core:flow_await_all"
+"timer.delay" = "bpg_nodes_core:timer_delay"
+process_call = "bpg_nodes_core:process_call"
+"fs.markdown_list" = "bpg_nodes_core:fs_markdown_list"
+"text.markdown_chunk" = "bpg_nodes_core:text_markdown_chunk"
+"text.parse_numbers" = "bpg_nodes_core:text_parse_numbers"
+"math.sum_numbers" = "bpg_nodes_core:math_sum_numbers"

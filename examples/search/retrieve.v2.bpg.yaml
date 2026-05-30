@@ -1,0 +1,25 @@
+schema_version: 2
+process:
+  name: search_retrieve
+  trigger: query
+  nodes:
+    query:
+      ref:
+        package: bpg.nodes.core@v1
+        node: passthrough
+    embed_query:
+      ref:
+        package: bpg.nodes.search@v1
+        node: embed.text
+    search:
+      ref:
+        package: bpg.nodes.search@v1
+        node: weaviate.hybrid_search
+      config:
+        top_k: 8
+        store: search_main
+  edges:
+    - from: query
+      to: embed_query
+    - from: embed_query
+      to: search
