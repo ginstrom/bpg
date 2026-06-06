@@ -23,6 +23,7 @@ from bpg.runtime.langgraph_runtime import LangGraphRuntime
 from bpg.runtime.backends import available_backends, get_backend
 from bpg.runtime.orchestrator import BpgOrchestrator, ProviderNodeExecutionAdapter
 from bpg.runtime.observability import (
+    OpenTelemetryEventSink,
     EventSink,
     EventSinkGroup,
     LegacyRunEventAdapter,
@@ -30,6 +31,8 @@ from bpg.runtime.observability import (
     LoggingEventSink,
     NoopEventSink,
     RunEvent,
+    TracingConfig,
+    build_observability_sink,
     event_to_run_event,
     replay_run,
     run_event_to_event,
@@ -48,6 +51,7 @@ __all__ = [
     "sha256_json",
     "available_backends",
     "get_backend",
+    "OpenTelemetryEventSink",
     "EventSink",
     "EventSinkGroup",
     "LegacyRunEventAdapter",
@@ -55,6 +59,8 @@ __all__ = [
     "LoggingEventSink",
     "NoopEventSink",
     "RunEvent",
+    "TracingConfig",
+    "build_observability_sink",
     "event_to_run_event",
     "replay_run",
     "run_event_to_event",
