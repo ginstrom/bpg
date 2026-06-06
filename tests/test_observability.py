@@ -25,7 +25,8 @@ from bpg.runtime.langgraph_runtime import (
     LangGraphRuntime,
     _compute_retry_delay,
 )
-from bpg.runtime.observability import ListEventSink, replay_run
+from bpg.runtime.events import BpgEvent
+from bpg.runtime.observability import EventSinkGroup, ListEventSink, replay_run
 
 _PROCESS_FILE = Path(__file__).resolve().parents[1] / "process.bpg.yaml"
 
@@ -89,9 +90,14 @@ def test_events_emitted_on_success(ir):
 
     types = [e["event_type"] for e in sink.events]
 
+    assert types[0] == "run_started"
+    assert types[-1] == "run_completed"
+
     # Trigger fires as node_completed without node_started
-    assert types[0] == "node_completed"
-    assert sink.events[0]["node"] == "intake_form"
+    trigger_events = sink.for_node("intake_form")
+    assert trigger_events[0]["event_type"] == "node_completed"
+    assert sink.canonical_events[0].event_type == "run_started"
+    assert isinstance(sink.canonical_events[0], BpgEvent)
 
     # triage: started → completed
     triage_events = sink.for_node("triage")
@@ -119,7 +125,7 @@ def test_events_emitted_on_success(ir):
 
 
 def test_retry_events_and_backoff(ir):
-    """node_retrying events carry attempt/delay; time.sleep is called."""
+    """node_retry_scheduled events carry attempt/delay; time.sleep is called."""
     mock = MockProvider()
     # Register a retryable error so all attempts fail
     mock.register_error(
@@ -154,9 +160,9 @@ def test_retry_events_and_backoff(ir):
     triage_events = sink.for_node("triage")
     event_types = [e["event_type"] for e in triage_events]
 
-    # node_started → node_retrying × 2 → node_failed
+    # node_started → node_retry_scheduled × 2 → node_failed
     assert event_types[0] == "node_started"
-    retrying = [e for e in triage_events if e["event_type"] == "node_retrying"]
+    retrying = [e for e in triage_events if e["event_type"] == "node_retry_scheduled"]
     assert len(retrying) == 2  # 3 attempts → 2 retries between them
     assert event_types[-1] == "node_failed"
 
@@ -176,6 +182,35 @@ def test_retry_events_and_backoff(ir):
 
     # Final state records the failure
     assert state["node_statuses"]["triage"] == NodeStatus.FAILED.value
+
+
+def test_event_sink_group_preserves_order():
+    event = BpgEvent(
+        event_type="run_started",
+        run_id="r1",
+        process_name="p1",
+        process_version="v1",
+        process_hash="h1",
+        engine_backend="test",
+    )
+    calls: list[str] = []
+
+    class RecordingSink(ListEventSink):
+        def __init__(self, name: str) -> None:
+            super().__init__()
+            self._name = name
+
+        def emit(self, event: BpgEvent) -> None:
+            calls.append(self._name)
+            super().emit(event)
+
+    first = RecordingSink("first")
+    second = RecordingSink("second")
+    EventSinkGroup([first, second]).emit(event)
+
+    assert calls == ["first", "second"]
+    assert first.canonical_events == [event]
+    assert second.canonical_events == [event]
 
 
 # ---------------------------------------------------------------------------

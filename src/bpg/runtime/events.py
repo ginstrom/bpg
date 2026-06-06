@@ -198,6 +198,16 @@ def event_from_run_event(
         payload["error_code"] = event["error_code"]
     if "status" in event:
         payload["status"] = event["status"]
+    for key in (
+        "attempt",
+        "delay_seconds",
+        "idempotency_key",
+        "effective_status",
+        "synthetic",
+        "cache_hit",
+    ):
+        if key in event:
+            payload[key] = event[key]
 
     kwargs: dict[str, Any] = {
         "event_type": event.get("event_type"),
@@ -208,10 +218,15 @@ def event_from_run_event(
         "process_hash": process_hash,
         "engine_backend": engine_backend,
         "node_id": event.get("node") or event.get("node_id"),
+        "node_type": event.get("node_type"),
+        "node_package": event.get("node_package"),
         "correlation_id": event.get("correlation_id"),
         "causation_id": event.get("causation_id"),
         "provider_id": event.get("provider_id"),
         "provider_job_id": event.get("provider_job_id"),
+        "actor_id": event.get("actor_id"),
+        "actor_type": event.get("actor_type"),
+        "policy_id": event.get("policy_id"),
         "payload": payload or None,
         "tags": dict(event.get("tags") or {}),
     }
@@ -282,7 +297,7 @@ def replay_state_from_events(events: list[Dict[str, Any]]) -> Dict[str, Any]:
         event = normalize_event(raw)
         event_type = event["event_type"]
         counts[event_type] += 1
-        node = event.get("node")
+        node = event.get("node") or event.get("node_id")
         if isinstance(node, str):
             if event_type in {"node_scheduled", "node_started"}:
                 node_statuses[node] = "running"

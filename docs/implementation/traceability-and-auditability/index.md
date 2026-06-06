@@ -6,7 +6,7 @@ The work should be delivered in order. Each step is self-contained enough to han
 
 ## Checklist
 - [x] [1. Canonical Event Envelope](01-canonical-event-envelope/index.md)
-- [ ] [2. Runtime Sink Refactor](02-runtime-sink-refactor/index.md)
+- [x] [2. Runtime Sink Refactor](02-runtime-sink-refactor/index.md)
 - [ ] [3. OpenTelemetry Tracing](03-opentelemetry-tracing/index.md)
 - [ ] [4. Postgres Audit Ledger](04-postgres-audit-ledger/index.md)
 - [ ] [5. Audit Policy Controls](05-audit-policy-controls/index.md)

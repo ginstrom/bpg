@@ -41,7 +41,8 @@ from bpg.providers.base import (
     compute_idempotency_key,
 )
 from bpg.runtime.expr import eval_when, resolve_mapping
-from bpg.runtime.observability import EventSink, NoopEventSink, RunEvent
+from bpg.runtime.events import BpgEvent, sha256_json
+from bpg.runtime.observability import EventSink, NoopEventSink, RunEvent, run_event_to_event
 from bpg.runtime.state import RunState
 
 
@@ -197,6 +198,12 @@ class LangGraphRuntime:
         self._providers = providers
         self._checkpointer = checkpointer
         self._sink: EventSink = event_sink if event_sink is not None else NoopEventSink()
+        metadata = self._ir.process.metadata
+        self._process_version = metadata.version if metadata else "unknown"
+        self._process_hash = sha256_json(
+            self._ir.process.model_dump(mode="json", by_alias=True, exclude_none=True)
+        )
+        self._engine_backend = "langgraph"
         self._result_cache: Dict[str, Dict[str, Any]] = dict(initial_result_cache or {})
         self._cancel_events: Dict[str, threading.Event] = {}
         self._inflight_handles: Dict[str, tuple[Provider, Any]] = {}
@@ -478,16 +485,23 @@ class LangGraphRuntime:
             with self._runtime_lock:
                 cancel_event = self._cancel_events.setdefault(run_id, threading.Event())
 
-            def _base_event(**extra) -> RunEvent:
-                """Build a RunEvent with the fields common to every transition."""
+            def _base_event(**extra) -> BpgEvent:
+                """Build a canonical event with fields common to every transition."""
                 ev: RunEvent = {
                     "run_id": run_id,
                     "process_name": process_name,
                     "node": node_name,
+                    "node_type": resolved_node.instance.node_type,
+                    "provider_id": resolved_node.node_type.provider,
                     "timestamp": _now_iso(),
                 }
                 ev.update(extra)  # type: ignore[typeddict-item]
-                return ev
+                return run_event_to_event(
+                    ev,
+                    process_version=self._process_version,
+                    process_hash=self._process_hash,
+                    engine_backend=self._engine_backend,
+                )
 
             if state.get("run_status") == NodeStatus.FAILED.value:
                 return {
@@ -1000,7 +1014,7 @@ class LangGraphRuntime:
                         _attempt, backoff_strategy, initial_delay_s, max_delay_s
                     )
                     sink.emit(_base_event(
-                        event_type="node_retrying",
+                        event_type="node_retry_scheduled",
                         status=NodeStatus.RUNNING.value,
                         attempt=_attempt + 1,
                         delay_seconds=delay,
@@ -1037,7 +1051,7 @@ class LangGraphRuntime:
                         "idempotency_key": idempotency_key,
                     }
                     sink.emit(_base_event(
-                        event_type="node_timed_out",
+                        event_type="node_failed",
                         status=NodeStatus.TIMED_OUT.value,
                         effective_status=NodeStatus.COMPLETED.value,
                         synthetic=True,
@@ -1070,7 +1084,7 @@ class LangGraphRuntime:
                         "idempotency_key": idempotency_key,
                     }
                     sink.emit(_base_event(
-                        event_type="node_timed_out",
+                        event_type="node_failed",
                         status=NodeStatus.TIMED_OUT.value,
                         input=redacted_input,
                         idempotency_key=idempotency_key,
@@ -1263,6 +1277,17 @@ class LangGraphRuntime:
             if self._ir.process.metadata
             else self._ir.process.trigger
         )
+        self._sink.emit(
+            BpgEvent(
+                event_type="run_started",
+                run_id=run_id,
+                process_name=process_name,
+                process_version=self._process_version,
+                process_hash=self._process_hash,
+                engine_backend=self._engine_backend,
+                payload={"status": "running"},
+            )
+        )
 
         # Validate trigger input against the effective input type.
         # When the trigger node's in_type has no fields (e.g. opaque ``object``),
@@ -1316,6 +1341,21 @@ class LangGraphRuntime:
                 final_state["run_status"] = NodeStatus.FAILED.value
             else:
                 final_state["run_status"] = NodeStatus.COMPLETED.value
+        self._sink.emit(
+            BpgEvent(
+                event_type=(
+                    "run_completed"
+                    if final_state.get("run_status") == NodeStatus.COMPLETED.value
+                    else "run_failed"
+                ),
+                run_id=run_id,
+                process_name=process_name,
+                process_version=self._process_version,
+                process_hash=self._process_hash,
+                engine_backend=self._engine_backend,
+                payload={"status": final_state.get("run_status", "completed")},
+            )
+        )
         if self._ir.process.policy and self._ir.process.policy.audit:
             audit = self._ir.process.policy.audit
             audit_record = {
@@ -1324,15 +1364,25 @@ class LangGraphRuntime:
                 "tags": dict(audit.tags or {}),
                 "emitted_at": _now_iso(),
             }
-            self._sink.emit({
-                "event_type": "run_audit",
-                "run_id": run_id,
-                "process_name": process_name,
-                "node": "__process__",
-                "timestamp": audit_record["emitted_at"],
-                "status": final_state.get("run_status", "completed"),
-                "tags": audit_record["tags"],
-            })
+            self._sink.emit(
+                BpgEvent(
+                    event_type="policy_checked",
+                    occurred_at=audit_record["emitted_at"],
+                    run_id=run_id,
+                    process_name=process_name,
+                    process_version=self._process_version,
+                    process_hash=self._process_hash,
+                    engine_backend=self._engine_backend,
+                    node_id="__process__",
+                    policy_id="audit",
+                    payload={
+                        "status": final_state.get("run_status", "completed"),
+                        "retention": audit_record["retention"],
+                        "export_to": audit_record["export_to"],
+                    },
+                    tags=audit_record["tags"],
+                )
+            )
             final_state["audit"] = audit_record
         with self._runtime_lock:
             self._cancel_events.pop(run_id, None)

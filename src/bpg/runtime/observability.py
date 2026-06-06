@@ -1,18 +1,17 @@
 """Structured event emission and run replay for BPG process observability.
 
-Every node transition in the runtime emits a :class:`RunEvent` to a pluggable
-:class:`EventSink`.  This decouples observability concerns from execution logic
-and lets operators plug in log aggregators, metrics sinks, or replay buffers
-without touching the engine.
+Every node transition in the runtime emits a canonical :class:`BpgEvent` to a
+pluggable :class:`EventSink`. This decouples observability concerns from
+execution logic and lets operators plug in log aggregators, metrics sinks, or
+replay buffers without touching the engine.
 
 Event types
 -----------
 - ``node_started``  — emitted just before the provider is invoked
-- ``node_retrying`` — emitted between retry attempts (after a retryable failure)
+- ``node_retry_scheduled`` — emitted between retry attempts
 - ``node_completed`` — emitted on success
 - ``node_failed``   — emitted after retries are exhausted or a non-retryable error
 - ``node_skipped``  — emitted when no incoming edge fires
-- ``node_timed_out`` — emitted when the effective timeout is exceeded
 
 Replay
 ------
@@ -38,12 +37,13 @@ Usage::
 
 from __future__ import annotations
 
-import json
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from typing_extensions import TypedDict
+
+from bpg.runtime.events import BpgEvent, event_from_run_event
 
 
 # ---------------------------------------------------------------------------
@@ -101,8 +101,8 @@ class EventSink(ABC):
     """
 
     @abstractmethod
-    def emit(self, event: RunEvent) -> None:
-        """Receive and process a single :class:`RunEvent`.
+    def emit(self, event: BpgEvent) -> None:
+        """Receive and process a single canonical :class:`BpgEvent`.
 
         Implementations MUST NOT raise — swallow or log exceptions internally
         so that a sink failure never disrupts process execution.
@@ -119,8 +119,35 @@ class EventSink(ABC):
 class NoopEventSink(EventSink):
     """Sink that discards all events.  Used as the default when no sink is supplied."""
 
-    def emit(self, event: RunEvent) -> None:  # noqa: ARG002
+    def emit(self, event: BpgEvent) -> None:  # noqa: ARG002
         pass
+
+
+class EventSinkGroup(EventSink):
+    """Fan out canonical events to multiple sinks in deterministic order."""
+
+    def __init__(self, sinks: Iterable[EventSink]) -> None:
+        self._sinks = list(sinks)
+
+    def emit(self, event: BpgEvent) -> None:
+        for sink in self._sinks:
+            try:
+                sink.emit(event)
+            except Exception:  # noqa: BLE001
+                continue
+
+
+class LegacyRunEventAdapter(EventSink):
+    """Adapter for old sinks that still expect ``RunEvent`` dictionaries."""
+
+    def __init__(self, sink: Any) -> None:
+        self._sink = sink
+
+    def emit(self, event: BpgEvent) -> None:
+        try:
+            self._sink.emit(event_to_run_event(event))
+        except Exception:  # noqa: BLE001
+            pass
 
 
 class ListEventSink(EventSink):
@@ -134,14 +161,20 @@ class ListEventSink(EventSink):
     """
 
     def __init__(self) -> None:
+        self.canonical_events: List[BpgEvent] = []
         self.events: List[RunEvent] = []
 
-    def emit(self, event: RunEvent) -> None:
-        self.events.append(event)
+    def emit(self, event: BpgEvent) -> None:
+        self.canonical_events.append(event)
+        self.events.append(event_to_run_event(event))
 
     def by_type(self, event_type: str) -> List[RunEvent]:
         """Return all events matching the given ``event_type``."""
         return [e for e in self.events if e.get("event_type") == event_type]
+
+    def canonical_by_type(self, event_type: str) -> List[BpgEvent]:
+        """Return all canonical events matching the given ``event_type``."""
+        return [e for e in self.canonical_events if e.event_type == event_type]
 
     def for_node(self, node: str) -> List[RunEvent]:
         """Return all events for the given node name."""
@@ -153,7 +186,7 @@ class LoggingEventSink(EventSink):
     :mod:`logging` module.
 
     All events are emitted at ``INFO`` level unless they represent a failure
-    (``node_failed``, ``node_timed_out``), which are emitted at ``WARNING``.
+    (``node_failed``), which are emitted at ``WARNING``.
 
     Args:
         logger: Logger to use.  Defaults to ``logging.getLogger("bpg.events")``.
@@ -162,11 +195,10 @@ class LoggingEventSink(EventSink):
     def __init__(self, logger: Optional[logging.Logger] = None) -> None:
         self._logger = logger or logging.getLogger("bpg.events")
 
-    def emit(self, event: RunEvent) -> None:
+    def emit(self, event: BpgEvent) -> None:
         try:
-            line = json.dumps(event, default=str)
-            event_type = event.get("event_type", "")
-            if event_type in ("node_failed", "node_timed_out"):
+            line = event.to_canonical_json()
+            if event.event_type == "node_failed":
                 self._logger.warning(line)
             else:
                 self._logger.info(line)
@@ -183,11 +215,58 @@ _STATUS_TO_EVENT: Dict[str, str] = {
     "completed": "node_completed",
     "failed": "node_failed",
     "skipped": "node_skipped",
-    "timed_out": "node_timed_out",
+    "timed_out": "node_failed",
     "running": "node_started",
     "pending": "node_started",
     "cancelled": "node_failed",
 }
+
+
+def event_to_run_event(event: BpgEvent) -> RunEvent:
+    """Project a canonical event into the historical dict-shaped runtime view."""
+    payload = dict(event.payload or {})
+    legacy: RunEvent = {
+        "event_type": event.event_type,
+        "run_id": event.run_id,
+        "process_name": event.process_name,
+        "timestamp": event.occurred_at,
+    }
+    if event.node_id is not None:
+        legacy["node"] = event.node_id
+    for key in (
+        "attempt",
+        "delay_seconds",
+        "input",
+        "output",
+        "error",
+        "error_code",
+        "idempotency_key",
+        "status",
+        "effective_status",
+        "synthetic",
+        "cache_hit",
+    ):
+        if key in payload:
+            legacy[key] = payload[key]  # type: ignore[typeddict-unknown-key]
+    if event.tags:
+        legacy["tags"] = dict(event.tags)  # type: ignore[typeddict-unknown-key]
+    return legacy
+
+
+def run_event_to_event(
+    event: RunEvent,
+    *,
+    process_version: str,
+    process_hash: str,
+    engine_backend: str,
+) -> BpgEvent:
+    """Build a canonical event from the historical runtime event dictionary."""
+    return event_from_run_event(
+        event,
+        process_version=process_version,
+        process_hash=process_hash,
+        engine_backend=engine_backend,
+    )
 
 
 def replay_run(
@@ -195,6 +274,10 @@ def replay_run(
     run_id: str,
     process_name: str,
     sink: EventSink,
+    *,
+    process_version: str = "unknown",
+    process_hash: str = "unknown",
+    engine_backend: str = "replay",
 ) -> None:
     """Replay a completed execution log by re-emitting structured events.
 
@@ -236,4 +319,11 @@ def replay_run(
         if "idempotency_key" in entry:
             event["idempotency_key"] = entry["idempotency_key"]
 
-        sink.emit(event)
+        sink.emit(
+            run_event_to_event(
+                event,
+                process_version=process_version,
+                process_hash=process_hash,
+                engine_backend=engine_backend,
+            )
+        )

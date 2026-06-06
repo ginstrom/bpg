@@ -783,7 +783,11 @@ policy:
     assert final_state["audit"]["retention"] == "365d"
     assert final_state["audit"]["export_to"] == "splunk.audit_sink"
     assert final_state["audit"]["tags"] == {"compliance": "sox", "env": "prod"}
-    audit_events = [e for e in sink.events if e.get("event_type") == "run_audit"]
+    audit_events = [
+        e
+        for e in sink.events
+        if e.get("event_type") == "policy_checked" and e.get("node") == "__process__"
+    ]
     assert len(audit_events) == 1
     assert audit_events[0].get("tags") == {"compliance": "sox", "env": "prod"}
 

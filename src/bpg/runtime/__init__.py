@@ -24,11 +24,15 @@ from bpg.runtime.backends import available_backends, get_backend
 from bpg.runtime.orchestrator import BpgOrchestrator, ProviderNodeExecutionAdapter
 from bpg.runtime.observability import (
     EventSink,
+    EventSinkGroup,
+    LegacyRunEventAdapter,
     ListEventSink,
     LoggingEventSink,
     NoopEventSink,
     RunEvent,
+    event_to_run_event,
     replay_run,
+    run_event_to_event,
 )
 
 __all__ = [
@@ -45,9 +49,13 @@ __all__ = [
     "available_backends",
     "get_backend",
     "EventSink",
+    "EventSinkGroup",
+    "LegacyRunEventAdapter",
     "ListEventSink",
     "LoggingEventSink",
     "NoopEventSink",
     "RunEvent",
+    "event_to_run_event",
     "replay_run",
+    "run_event_to_event",
 ]
