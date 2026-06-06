@@ -119,6 +119,10 @@ See [LICENSE](LICENSE), [LICENSE-APACHE](LICENSE-APACHE), and [NOTICE](NOTICE).
   - [Debug Validation Errors](docs/guides/debug_validation_errors.md)
   - [Testing Processes](docs/guides/testing_processes.md)
   - [System Integration Tests](docs/guides/system_integration_tests.md)
+- Design:
+  - [Traceability and Auditability](docs/design/traceability-and-auditability.md)
+- Implementation Plans:
+  - [Traceability and Auditability](docs/implementation/traceability-and-auditability/index.md)
 - Reference:
   - [Process Schema](docs/reference/process_schema.md)
   - [Node Schema](docs/reference/node_schema.md)
