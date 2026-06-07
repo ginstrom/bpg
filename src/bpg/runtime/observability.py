@@ -563,8 +563,16 @@ def build_observability_sink(
     they can receive trace/span IDs when an OpenTelemetry sink is active.
     """
     tracing_sink = OpenTelemetryEventSink.from_config(config)
-    sinks = [tracing_sink, *list(extra_sinks)]
-    active_sinks = [sink for sink in sinks if not isinstance(sink, NoopEventSink)]
+    if isinstance(config, TracingConfig):
+        audit_sink = None
+    else:
+        from bpg.audit import PostgresAuditEventSink
+
+        audit_sink = PostgresAuditEventSink.from_config(config)  # type: ignore[arg-type]
+    sinks = [tracing_sink, audit_sink, *list(extra_sinks)]
+    active_sinks = [
+        sink for sink in sinks if sink is not None and not isinstance(sink, NoopEventSink)
+    ]
     if not active_sinks:
         return NoopEventSink()
     if len(active_sinks) == 1:

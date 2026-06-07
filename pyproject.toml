@@ -13,6 +13,7 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-grpc>=1.42.1",
     "opentelemetry-exporter-otlp-proto-http>=1.42.1",
     "opentelemetry-sdk>=1.42.1",
+    "psycopg[binary]>=3.2.13",
     "pydantic>=2.12.5",
     "pyyaml>=6.0.3",
     "rich>=14.3.3",
@@ -74,5 +75,6 @@ bpg-nodes-comm = { workspace = true }
 
 [tool.pytest.ini_options]
 markers = [
+    "integration: tests that require local external services",
     "system_integration: tests that call real external production systems",
 ]

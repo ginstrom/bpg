@@ -72,6 +72,8 @@ uv run bpg doctor examples/wrappers/parse-sum-email/process.bpg.yaml
 
 Add at least one fixture process with audit policy enabled and one with invalid audit policy values.
 
+The Postgres audit ledger integration test from step 4 is intentionally opt-in. It is skipped unless `BPG_TEST_POSTGRES_DSN` is set, for example to a local `postgres:16` test container. Keep policy-control integration tests consistent with that convention unless the repository adds a managed Postgres fixture.
+
 ## Out of Scope
 - New marketplace nodes.
 - External checkpoint anchoring.
