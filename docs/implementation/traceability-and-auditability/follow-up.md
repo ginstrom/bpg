@@ -42,7 +42,7 @@ Deliver in order. Later items assume earlier contracts are merged.
 ## Checklist
 
 - [x] [10. Runtime Sink Integration](10-runtime-sink-integration/index.md)
-- [ ] [11. Workspace and Package Hygiene](11-workspace-and-package-hygiene/index.md)
+- [x] [11. Workspace and Package Hygiene](11-workspace-and-package-hygiene/index.md)
 - [ ] [12. Audit Correlation Projection](12-audit-correlation-projection/index.md)
 - [ ] [13. Lifecycle Event Coverage](13-lifecycle-event-coverage/index.md)
 - [ ] [14. Checkpoint Operations](14-checkpoint-operations/index.md)

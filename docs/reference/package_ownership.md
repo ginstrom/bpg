@@ -14,6 +14,7 @@ This workspace split establishes stable package roots without forcing an immedia
 - `bpg_nodes_human` owns human-in-the-loop and agent pipeline nodes.
 - `bpg_nodes_search` owns vector search, embedding, and web search nodes.
 - `bpg_nodes_comm` owns communication and integration nodes (email, HTTP, Kafka, Slack).
+- `bpg_nodes_audit` owns post-runtime audit helper nodes (export, verification, reporting).
 
 ## Transition Policy
 
