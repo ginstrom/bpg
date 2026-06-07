@@ -53,3 +53,35 @@ drop trigger if exists audit_events_no_delete on audit_events;
 create trigger audit_events_no_delete
 before delete on audit_events
 for each row execute function bpg_prevent_audit_events_mutation();
+
+create table if not exists audit_chain_checkpoints (
+  checkpoint_id bigserial primary key,
+  created_at timestamptz not null default now(),
+  scope text not null,
+  last_sequence_id bigint not null,
+  chain_head_hash text not null,
+  anchored_ref text,
+  signature text
+);
+
+create index if not exists audit_chain_checkpoints_scope_idx
+  on audit_chain_checkpoints (scope, checkpoint_id);
+
+create or replace function bpg_prevent_audit_chain_checkpoints_mutation()
+returns trigger
+language plpgsql
+as $$
+begin
+  raise exception 'audit_chain_checkpoints is append-only and cannot be updated or deleted';
+end;
+$$;
+
+drop trigger if exists audit_chain_checkpoints_no_update on audit_chain_checkpoints;
+create trigger audit_chain_checkpoints_no_update
+before update on audit_chain_checkpoints
+for each row execute function bpg_prevent_audit_chain_checkpoints_mutation();
+
+drop trigger if exists audit_chain_checkpoints_no_delete on audit_chain_checkpoints;
+create trigger audit_chain_checkpoints_no_delete
+before delete on audit_chain_checkpoints
+for each row execute function bpg_prevent_audit_chain_checkpoints_mutation();

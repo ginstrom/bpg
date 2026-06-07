@@ -19,16 +19,21 @@ import pytest
 
 from bpg.audit import (
     AUDIT_SCHEMA_SQL,
+    AuditChainCheckpoint,
     AuditPolicyConfig,
     AuditSinkFailure,
     DuplicateAuditEventError,
+    LocalFileCheckpointAnchorProvider,
     PostgresAuditConfig,
     PostgresAuditEventSink,
     audit_payload_for_event,
     build_audit_record,
+    checkpoint_to_event,
     compute_audit_event_hash,
     redact_payload,
+    sign_checkpoint,
     verify_audit_chain,
+    verify_checkpoint_signature,
 )
 from bpg.runtime.events import BpgEvent, sha256_json
 from bpg.runtime.observability import NoopEventSink, build_observability_sink
@@ -135,6 +140,148 @@ def test_verify_audit_chain_detects_previous_hash_tampering():
     assert result.ok is False
     assert result.first_mismatch_sequence_id == 2
     assert result.message == "previous_hash does not match prior event_hash"
+
+
+def test_checkpoint_signature_uses_stable_material():
+    checkpoint = AuditChainCheckpoint(
+        checkpoint_id=None,
+        created_at=None,
+        scope="run:run-1",
+        last_sequence_id=10,
+        chain_head_hash="head-1",
+    )
+
+    signed = checkpoint.__class__(
+        checkpoint_id=1,
+        created_at="2026-06-07T00:00:00+00:00",
+        scope=checkpoint.scope,
+        last_sequence_id=checkpoint.last_sequence_id,
+        chain_head_hash=checkpoint.chain_head_hash,
+        signature=sign_checkpoint(checkpoint, signing_key="secret"),
+    )
+
+    assert signed.signature == sign_checkpoint(signed, signing_key="secret")
+    assert verify_checkpoint_signature(signed, signing_key="secret") is True
+    assert verify_checkpoint_signature(signed, signing_key="wrong") is False
+
+
+def test_local_file_checkpoint_anchor_writes_checkpoint(tmp_path):
+    checkpoint = AuditChainCheckpoint(
+        checkpoint_id=None,
+        created_at=None,
+        scope="global",
+        last_sequence_id=10,
+        chain_head_hash="head-1",
+        signature="hmac-sha256:test",
+    )
+    provider = LocalFileCheckpointAnchorProvider(tmp_path)
+
+    result = provider.anchor(checkpoint)
+
+    assert result.anchored_ref is not None
+    assert result.metadata is not None
+    assert result.metadata["sha256"]
+    assert "head-1" in (tmp_path / result.anchored_ref.split("/")[-1]).read_text(encoding="utf-8")
+
+
+def test_checkpoint_to_event_returns_canonical_audit_event():
+    checkpoint = AuditChainCheckpoint(
+        checkpoint_id=7,
+        created_at="2026-06-07T00:00:00+00:00",
+        scope="global",
+        last_sequence_id=3,
+        chain_head_hash="head-1",
+        anchored_ref="file:///checkpoint",
+        signature="hmac-sha256:test",
+    )
+
+    event = checkpoint_to_event(checkpoint)
+
+    assert event.event_type == "audit_checkpointed"
+    assert event.run_id == "__audit_checkpoint__"
+    assert event.payload["checkpoint_id"] == 7
+    assert event.payload["chain_head_hash"] == "head-1"
+
+
+def test_verify_audit_chain_can_start_from_checkpoint():
+    first = build_audit_record(
+        _event("run_started", event_id="event-1"),
+        sequence_id=1,
+        previous_hash=None,
+    )
+    second = build_audit_record(
+        _event("node_completed", event_id="event-2"),
+        sequence_id=2,
+        previous_hash=first.event_hash,
+    )
+    checkpoint = AuditChainCheckpoint(
+        checkpoint_id=1,
+        created_at="2026-06-07T00:00:00+00:00",
+        scope="run:run-1",
+        last_sequence_id=1,
+        chain_head_hash=first.event_hash,
+        anchored_ref=None,
+    )
+
+    result = verify_audit_chain([first, second], checkpoint=checkpoint)
+
+    assert result.ok is True
+    assert result.checked == 1
+    assert result.checkpoint_id == 1
+    assert result.message == "audit chain verified from checkpoint"
+    assert result.anchor_verified is False
+    assert result.anchor_message == "missing external anchor"
+
+
+def test_verify_audit_chain_reports_missing_required_anchor():
+    first = build_audit_record(
+        _event("run_started", event_id="event-1"),
+        sequence_id=1,
+        previous_hash=None,
+    )
+    checkpoint = AuditChainCheckpoint(
+        checkpoint_id=1,
+        created_at="2026-06-07T00:00:00+00:00",
+        scope="run:run-1",
+        last_sequence_id=1,
+        chain_head_hash=first.event_hash,
+    )
+
+    result = verify_audit_chain([first], checkpoint=checkpoint, require_anchor=True)
+
+    assert result.ok is False
+    assert result.message == "checkpoint anchor missing"
+    assert result.anchor_message == "missing external anchor"
+
+
+def test_verify_audit_chain_detects_tampering_after_checkpoint():
+    first = build_audit_record(
+        _event("run_started", event_id="event-1"),
+        sequence_id=1,
+        previous_hash=None,
+    )
+    second = build_audit_record(
+        _event("node_completed", event_id="event-2"),
+        sequence_id=2,
+        previous_hash=first.event_hash,
+    )
+    checkpoint = AuditChainCheckpoint(
+        checkpoint_id=1,
+        created_at="2026-06-07T00:00:00+00:00",
+        scope="run:run-1",
+        last_sequence_id=1,
+        chain_head_hash=first.event_hash,
+        anchored_ref="file:///checkpoint",
+    )
+    tampered = second.to_insert_row()
+    tampered["payload"] = {"status": "completed"}
+
+    result = verify_audit_chain([first, tampered], checkpoint=checkpoint)
+
+    assert result.ok is False
+    assert result.first_mismatch_sequence_id == 2
+    assert result.message == "payload_sha256 mismatch"
+    assert result.checkpoint_id == 1
 
 
 def test_postgres_audit_config_parses_root_and_observability_shapes():
@@ -343,7 +490,7 @@ def test_observability_builder_keeps_extra_sinks_when_audit_disabled():
 
 
 @pytest.mark.integration
-def test_postgres_audit_sink_integration():
+def test_postgres_audit_sink_integration(tmp_path):
     dsn = os.getenv("BPG_TEST_POSTGRES_DSN")
     if not dsn:
         pytest.skip("set BPG_TEST_POSTGRES_DSN to run Postgres audit integration test")
@@ -354,6 +501,7 @@ def test_postgres_audit_sink_integration():
     sink = PostgresAuditEventSink(dsn=dsn)
     with psycopg.connect(dsn) as conn:
         conn.execute(AUDIT_SCHEMA_SQL)
+        conn.execute("truncate table audit_chain_checkpoints restart identity")
         conn.execute("truncate table audit_events restart identity")
         conn.commit()
 
@@ -367,6 +515,19 @@ def test_postgres_audit_sink_integration():
     assert second_record.previous_hash == first_record.event_hash
     assert sink.verify_run(run_id).ok is True
 
+    checkpoint = sink.create_checkpoint(
+        run_id=run_id,
+        signing_key="checkpoint-secret",
+        anchor_provider=LocalFileCheckpointAnchorProvider(tmp_path),
+    )
+    assert checkpoint.scope == f"run:{run_id}"
+    assert checkpoint.last_sequence_id == second_record.sequence_id
+    assert checkpoint.chain_head_hash == second_record.event_hash
+    assert checkpoint.anchored_ref
+    assert checkpoint.signature
+    assert sink.verify_from_latest_checkpoint(run_id, signing_key="checkpoint-secret").ok is True
+    assert sink.latest_checkpoint(scope=f"run:{run_id}") == checkpoint
+
     with pytest.raises(DuplicateAuditEventError):
         sink.insert_event(first_event)
 
@@ -379,6 +540,18 @@ def test_postgres_audit_sink_integration():
         conn.rollback()
         with pytest.raises(psycopg.errors.RaiseException):
             conn.execute("delete from audit_events where event_id = %s", (first_event.event_id,))
+        conn.rollback()
+        with pytest.raises(psycopg.errors.RaiseException):
+            conn.execute(
+                "update audit_chain_checkpoints set anchored_ref = null where checkpoint_id = %s",
+                (checkpoint.checkpoint_id,),
+            )
+        conn.rollback()
+        with pytest.raises(psycopg.errors.RaiseException):
+            conn.execute(
+                "delete from audit_chain_checkpoints where checkpoint_id = %s",
+                (checkpoint.checkpoint_id,),
+            )
 
     ignoring_sink = PostgresAuditEventSink(dsn=dsn, duplicate_strategy="ignore")
     assert ignoring_sink.insert_event(first_event) is None
