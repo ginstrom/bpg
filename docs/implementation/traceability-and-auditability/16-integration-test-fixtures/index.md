@@ -60,12 +60,27 @@ The original plan intentionally deferred live service tests. Unit tests and mock
 - Temporal integration test exists or is explicitly blocked behind a tracked fixture issue with mocked fallback retained.
 - Follow-up verification commands in `follow-up.md` are reproducible by an engineer with local services.
 
+## Local Integration Setup
+
+See [tests/integration/README.md](../../../../tests/integration/README.md) for Docker
+startup commands and environment variable conventions.
+
+Standard variables:
+
+- `BPG_TEST_POSTGRES_DSN` — Postgres audit integration (also sets `BPG_AUDIT_DATABASE_URL` in e2e tests).
+- `BPG_TEST_TEMPORAL_TARGET` — Temporal dev service target (integration test skips until worker fixture lands).
+- `BPG_TEST_OTEL_ENDPOINT` — Optional OTLP collector endpoint for remote export verification.
+
 ## Verification
 
 ```bash
 # Postgres
 export BPG_TEST_POSTGRES_DSN=postgresql://bpg:bpg@localhost:55432/bpg
+export BPG_AUDIT_DATABASE_URL="$BPG_TEST_POSTGRES_DSN"
 uv run pytest tests/test_audit_postgres.py -m integration
+
+# End-to-end runtime capture
+uv run pytest tests/integration -m integration
 
 # Full opt-in suite
 uv run pytest -m integration

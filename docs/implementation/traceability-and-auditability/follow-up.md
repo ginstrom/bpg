@@ -47,7 +47,7 @@ Deliver in order. Later items assume earlier contracts are merged.
 - [x] [13. Lifecycle Event Coverage](13-lifecycle-event-coverage/index.md)
 - [x] [14. Checkpoint Operations](14-checkpoint-operations/index.md)
 - [x] [15. Tracing Enhancements](15-tracing-enhancements/index.md)
-- [ ] [16. Integration Test Fixtures](16-integration-test-fixtures/index.md)
+- [x] [16. Integration Test Fixtures](16-integration-test-fixtures/index.md)
 - [ ] [17. Operator Documentation](17-operator-documentation/index.md)
 
 ## Suggested Milestones
