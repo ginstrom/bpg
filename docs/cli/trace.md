@@ -51,6 +51,7 @@ uv run bpg trace show <run-id> --process-file examples/wrappers/parse-sum-email/
 - `exporter_target`: OTLP endpoint when tracing is enabled in the process definition.
 
 ## Related pages
+- [Tracing operations](../operations/tracing.md)
 - [CLI: bpg audit](audit.md)
 - [CLI: bpg replay](replay.md)
 - [Traceability and Auditability Design](../design/traceability-and-auditability.md)

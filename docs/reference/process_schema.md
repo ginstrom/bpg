@@ -106,6 +106,8 @@ Keep one canonical YAML shape. Avoid equivalent alternate representations.
 - Using an import registry file as a runnable process.
 
 ## Related pages
+- [Audit ledger operations](../operations/audit-ledger.md)
+- [Tracing operations](../operations/tracing.md)
 - [Node Schema](node_schema.md)
 - [Edge Schema](edge_schema.md)
 - [Error Codes](error_codes.md)

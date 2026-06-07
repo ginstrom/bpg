@@ -74,6 +74,7 @@ Create an audit chain checkpoint for `run:<run-id>` or `global`. Returns checkpo
 - `--signing-key-env`: Environment variable containing the checkpoint signing key.
 
 ## Related pages
+- [Audit ledger operations](../operations/audit-ledger.md)
 - [CLI: bpg trace](trace.md)
 - [CLI: bpg replay](replay.md)
 - [Traceability and Auditability Design](../design/traceability-and-auditability.md)

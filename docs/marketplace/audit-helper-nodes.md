@@ -63,6 +63,7 @@ Pass `dry_run: true` in node inputs to validate routing without external side ef
 
 ## Related Pages
 
+- [Audit ledger operations](../operations/audit-ledger.md)
 - [CLI: audit](../cli/audit.md)
 - [CLI: trace](../cli/trace.md)
 - [Traceability and Auditability Design](../design/traceability-and-auditability.md)
