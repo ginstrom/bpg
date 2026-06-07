@@ -212,6 +212,12 @@ def event_from_run_event(
         "effective_status",
         "synthetic",
         "cache_hit",
+        "edge_source",
+        "edge_target",
+        "edge_when",
+        "route_kind",
+        "decision",
+        "reason",
     ):
         if key in event:
             payload[key] = event[key]

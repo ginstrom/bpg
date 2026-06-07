@@ -16,6 +16,7 @@ from bpg_temporal.hitl import (
     ApprovalRequest,
     ApprovalSignal,
     ApprovalState,
+    approval_event_fields,
 )
 from bpg_temporal.metadata import (
     TemporalMetadata,
@@ -30,6 +31,7 @@ LEGACY_RUNTIME_MODULE = "bpg.runtime.engine"
 __all__ = [
     "ActorIdentity",
     "ApprovalGate",
+    "approval_event_fields",
     "ApprovalOutcome",
     "ApprovalRequest",
     "ApprovalRequiredPolicy",

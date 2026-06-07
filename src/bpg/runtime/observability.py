@@ -473,7 +473,12 @@ class OpenTelemetryEventSink(EventSink):
         target_span = self._span_for_event(event, attrs, timestamp)
         if target_span is not None:
             target_span.add_event(event.event_type, attrs, timestamp=timestamp)
-            if event.event_type in {"node_failed", "run_failed", "policy_blocked"}:
+            if event.event_type in {
+                "node_failed",
+                "run_failed",
+                "policy_blocked",
+                "approval_timed_out",
+            }:
                 target_span.set_status(Status(StatusCode.ERROR, str(attrs.get("bpg.error", ""))))
             elif event.event_type in {"node_completed", "run_completed"}:
                 target_span.set_status(Status(StatusCode.OK))
@@ -657,9 +662,17 @@ def event_to_run_event(event: BpgEvent) -> RunEvent:
         "effective_status",
         "synthetic",
         "cache_hit",
+        "edge_source",
+        "edge_target",
+        "edge_when",
+        "route_kind",
+        "decision",
+        "reason",
     ):
         if key in payload:
             legacy[key] = payload[key]  # type: ignore[typeddict-unknown-key]
+    if event.policy_id is not None:
+        legacy["policy_id"] = event.policy_id  # type: ignore[typeddict-unknown-key]
     if event.tags:
         legacy["tags"] = dict(event.tags)  # type: ignore[typeddict-unknown-key]
     for key in (

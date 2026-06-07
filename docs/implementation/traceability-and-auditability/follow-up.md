@@ -44,7 +44,7 @@ Deliver in order. Later items assume earlier contracts are merged.
 - [x] [10. Runtime Sink Integration](10-runtime-sink-integration/index.md)
 - [x] [11. Workspace and Package Hygiene](11-workspace-and-package-hygiene/index.md)
 - [x] [12. Audit Correlation Projection](12-audit-correlation-projection/index.md)
-- [ ] [13. Lifecycle Event Coverage](13-lifecycle-event-coverage/index.md)
+- [x] [13. Lifecycle Event Coverage](13-lifecycle-event-coverage/index.md)
 - [ ] [14. Checkpoint Operations](14-checkpoint-operations/index.md)
 - [ ] [15. Tracing Enhancements](15-tracing-enhancements/index.md)
 - [ ] [16. Integration Test Fixtures](16-integration-test-fixtures/index.md)

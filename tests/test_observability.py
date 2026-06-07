@@ -110,18 +110,28 @@ def test_events_emitted_on_success(ir):
     assert sink.canonical_events[0].event_type == "run_started"
     assert isinstance(sink.canonical_events[0], BpgEvent)
 
-    # triage: started → completed
+    # triage: edge → scheduled → started → completed
     triage_events = sink.for_node("triage")
-    assert [e["event_type"] for e in triage_events] == ["node_started", "node_completed"]
+    assert [e["event_type"] for e in triage_events] == [
+        "edge_fired",
+        "node_scheduled",
+        "node_started",
+        "node_completed",
+    ]
 
     # approval: skipped (no node_started because no invocation)
     approval_events = sink.for_node("approval")
     assert len(approval_events) == 1
     assert approval_events[0]["event_type"] == "node_skipped"
 
-    # gitlab: started → completed
+    # gitlab: edge → scheduled → started → completed
     gitlab_events = sink.for_node("gitlab")
-    assert [e["event_type"] for e in gitlab_events] == ["node_started", "node_completed"]
+    assert [e["event_type"] for e in gitlab_events] == [
+        "edge_fired",
+        "node_scheduled",
+        "node_started",
+        "node_completed",
+    ]
 
     # Every completed event has the required fields
     for ev in sink.by_type("node_completed"):
@@ -171,8 +181,8 @@ def test_retry_events_and_backoff(ir):
     triage_events = sink.for_node("triage")
     event_types = [e["event_type"] for e in triage_events]
 
-    # node_started → node_retry_scheduled × 2 → node_failed
-    assert event_types[0] == "node_started"
+    # edge → scheduled → started → retry × 2 → failed
+    assert event_types[:3] == ["edge_fired", "node_scheduled", "node_started"]
     retrying = [e for e in triage_events if e["event_type"] == "node_retry_scheduled"]
     assert len(retrying) == 2  # 3 attempts → 2 retries between them
     assert event_types[-1] == "node_failed"

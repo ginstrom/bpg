@@ -10,7 +10,14 @@ from bpg.providers import PROVIDER_REGISTRY
 from bpg.providers.mock import MockProvider
 from bpg.runtime.engine import Engine
 from bpg.state.store import StateStore
-from bpg_temporal import ApprovalGate, ApprovalOutcome, ApprovalRequest, ApprovalSignal, ActorIdentity
+from bpg_temporal import (
+    ApprovalGate,
+    ApprovalOutcome,
+    ApprovalRequest,
+    ApprovalSignal,
+    ActorIdentity,
+    approval_event_fields,
+)
 from bpg_temporal import metadata as temporal_metadata
 from bpg_temporal.runtime import TemporalRuntime
 
@@ -209,3 +216,30 @@ def test_approval_gate_records_signal_and_timer_temporal_metadata(monkeypatch):
         "temporal_workflow_id": "wf-approval",
         "temporal_timer_id": "approval.req-1.timeout",
     }
+
+
+def test_approval_event_fields_surface_temporal_metadata(monkeypatch):
+    monkeypatch.setattr(temporal_metadata, "_safe_temporal_workflow_info", lambda: None)
+    monkeypatch.setattr(temporal_metadata, "_safe_temporal_activity_info", lambda: None)
+    request = ApprovalRequest(
+        request_id="req-1",
+        workflow_id="wf-approval",
+        node_id="review",
+        correlation_id="corr-1",
+        subject="Review",
+        payload={},
+    )
+    gate = ApprovalGate(request)
+    gate.send_signal(
+        ApprovalSignal(
+            outcome=ApprovalOutcome.APPROVED,
+            actor=ActorIdentity(actor_id="alice"),
+        )
+    )
+
+    fields = approval_event_fields(gate.state, "approval_resolved", decision="approved")
+
+    assert fields["event_type"] == "approval_resolved"
+    assert fields["node_id"] == "review"
+    assert fields["temporal_workflow_id"] == "wf-approval"
+    assert fields["payload"]["decision"] == "approved"

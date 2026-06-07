@@ -94,6 +94,34 @@ class ApprovalState:
         ).to_event_fields()
 
 
+def approval_event_fields(
+    state: ApprovalState,
+    event_type: str,
+    *,
+    decision: str | None = None,
+) -> dict[str, Any]:
+    """Build canonical approval lifecycle event fields from gate state."""
+    payload: dict[str, Any] = {
+        "request_id": state.request.request_id,
+        "subject": state.request.subject,
+        "outcome": state.outcome.value,
+    }
+    if decision is not None:
+        payload["decision"] = decision
+    if state.signal is not None:
+        payload["reason"] = state.signal.reason
+    fields: dict[str, Any] = {
+        "event_type": event_type,
+        "node_id": state.request.node_id,
+        "correlation_id": state.request.correlation_id,
+        "actor_id": state.signal.actor.actor_id if state.signal else None,
+        "actor_type": state.signal.actor.actor_type if state.signal else None,
+        "payload": payload,
+    }
+    fields.update(state.temporal_metadata)
+    return {key: value for key, value in fields.items() if value is not None}
+
+
 class ApprovalGate:
     """Framework wait-state manager for Temporal-owned approval flows.
 
