@@ -23,6 +23,8 @@ from bpg_temporal.metadata import (
     TemporalMetadata,
     enrich_run_event_with_temporal_metadata,
     extract_temporal_metadata,
+    extract_trace_context,
+    trace_context_carrier_from_payload,
 )
 
 
@@ -165,11 +167,17 @@ class BpgWorkflow:
     def run(self, *, input_payload: Dict[str, Any], run_id: str) -> Dict[str, Any]:
         validate_process(self.process)
         ir = compile_process(self.process)
+        trace_parent_context = extract_trace_context(
+            trace_context_carrier_from_payload(input_payload)
+        )
         runtime = LangGraphRuntime(
             ir=ir,
             providers=self.providers,
             initial_result_cache=self.cached_results,
-            event_sink=build_runtime_event_sink(self.process),
+            event_sink=build_runtime_event_sink(
+                self.process,
+                trace_parent_context=trace_parent_context,
+            ),
         )
         result = runtime.run(input_payload=input_payload, run_id=run_id)
         metadata = (

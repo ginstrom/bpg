@@ -345,7 +345,29 @@ def _event_attributes(
         attributes["bpg.output"] = payload["output"]
     for key, value in event.tags.items():
         attributes[f"bpg.tag.{key}"] = value
+        attributes[f"bpg.audit.tags.{key}"] = value
     return _compact_attributes(attributes)
+
+
+def _span_links_for_event(event: BpgEvent) -> list[Any]:
+    """Build OpenTelemetry span links for cross-boundary correlation identifiers."""
+    from opentelemetry.trace import Link
+    from opentelemetry.trace.span import INVALID_SPAN_CONTEXT
+
+    links: list[Any] = []
+    link_specs: list[tuple[str, Any]] = []
+    if event.temporal_workflow_id:
+        link_specs.append(("bpg.link.temporal_workflow_id", event.temporal_workflow_id))
+    if event.temporal_activity_id:
+        link_specs.append(("bpg.link.temporal_activity_id", event.temporal_activity_id))
+    if event.temporal_child_workflow_id:
+        link_specs.append(("bpg.link.temporal_child_workflow_id", event.temporal_child_workflow_id))
+    if event.provider_job_id:
+        link_specs.append(("bpg.link.provider_job_id", event.provider_job_id))
+    if not link_specs:
+        return links
+    links.append(Link(INVALID_SPAN_CONTEXT, attributes=_compact_attributes(dict(link_specs))))
+    return links
 
 
 class OpenTelemetryEventSink(EventSink):
@@ -365,8 +387,10 @@ class OpenTelemetryEventSink(EventSink):
         span_exporter: Any | None = None,
         span_processor: Any | None = None,
         tracer: Any | None = None,
+        trace_parent_context: Any | None = None,
     ) -> None:
         self._config = config or TracingConfig(enabled=True)
+        self._trace_parent_context = trace_parent_context
         self._run_spans: Dict[str, Any] = {}
         self._node_spans: Dict[tuple[str, str], Any] = {}
         self._provider = tracer_provider
@@ -462,7 +486,9 @@ class OpenTelemetryEventSink(EventSink):
         if event.event_type == "run_started":
             span = self._tracer.start_span(
                 f"bpg.run {event.process_name}",
+                context=self._trace_parent_context,
                 attributes=attrs,
+                links=_span_links_for_event(event),
                 start_time=timestamp,
             )
             self._run_spans[event.run_id] = span
@@ -520,6 +546,7 @@ class OpenTelemetryEventSink(EventSink):
                     f"bpg.node {event.node_id}",
                     context=context,
                     attributes=attrs,
+                    links=_span_links_for_event(event),
                     start_time=timestamp,
                 )
                 self._node_spans[key] = span
@@ -531,6 +558,7 @@ class OpenTelemetryEventSink(EventSink):
                     f"bpg.node {event.node_id}",
                     context=context,
                     attributes=attrs,
+                    links=_span_links_for_event(event),
                     start_time=timestamp,
                 )
                 self._node_spans[key] = span
@@ -582,7 +610,11 @@ def _observability_config_from_process(process: Any) -> Dict[str, Any] | None:
     return None
 
 
-def build_runtime_event_sink(process: Any) -> EventSink:
+def build_runtime_event_sink(
+    process: Any,
+    *,
+    trace_parent_context: Any | None = None,
+) -> EventSink:
     """Build the runtime observability sink from a process definition.
 
     Reads ``process.observability`` when present and delegates to
@@ -592,20 +624,30 @@ def build_runtime_event_sink(process: Any) -> EventSink:
     config = _observability_config_from_process(process)
     if config is None:
         return NoopEventSink()
-    return build_observability_sink(config)
+    return build_observability_sink(config, trace_parent_context=trace_parent_context)
 
 
 def build_observability_sink(
     config: Dict[str, Any] | TracingConfig | None,
     *,
     extra_sinks: Iterable[EventSink] = (),
+    trace_parent_context: Any | None = None,
 ) -> EventSink:
     """Build the configured runtime observability sink group.
 
     Tracing is disabled by default. Extra sinks are appended after tracing so
     they can receive trace/span IDs when an OpenTelemetry sink is active.
     """
-    tracing_sink = OpenTelemetryEventSink.from_config(config)
+    tracing_config = (
+        config if isinstance(config, TracingConfig) else TracingConfig.from_mapping(config)
+    )
+    if tracing_config.enabled:
+        tracing_sink: EventSink = OpenTelemetryEventSink(
+            config=tracing_config,
+            trace_parent_context=trace_parent_context,
+        )
+    else:
+        tracing_sink = NoopEventSink()
     if isinstance(config, TracingConfig):
         audit_sink = None
     else:

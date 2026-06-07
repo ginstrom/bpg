@@ -155,6 +155,40 @@ def enrich_event_with_temporal_metadata(
     return event.model_copy(update=update)
 
 
+TRACE_CONTEXT_PAYLOAD_KEY = "_trace_context"
+
+
+def inject_trace_context(carrier: dict[str, str]) -> dict[str, str]:
+    """Inject the active OpenTelemetry context into a serializable carrier."""
+    try:
+        from opentelemetry.propagate import inject
+    except Exception:  # noqa: BLE001
+        return carrier
+    inject(carrier)
+    return carrier
+
+
+def extract_trace_context(carrier: Mapping[str, str] | None) -> Any:
+    """Extract an OpenTelemetry context from a propagated carrier."""
+    if not carrier:
+        return None
+    try:
+        from opentelemetry.propagate import extract
+    except Exception:  # noqa: BLE001
+        return None
+    return extract(dict(carrier))
+
+
+def trace_context_carrier_from_payload(payload: Mapping[str, Any] | None) -> dict[str, str] | None:
+    """Return a trace carrier embedded in a workflow/activity payload."""
+    if not isinstance(payload, Mapping):
+        return None
+    trace_context = payload.get(TRACE_CONTEXT_PAYLOAD_KEY)
+    if not isinstance(trace_context, Mapping):
+        return None
+    return {str(key): str(value) for key, value in trace_context.items()}
+
+
 def enrich_run_event_with_temporal_metadata(
     event: Mapping[str, Any],
     metadata: TemporalMetadata | Mapping[str, Any],

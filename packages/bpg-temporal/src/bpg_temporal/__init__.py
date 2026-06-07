@@ -19,10 +19,14 @@ from bpg_temporal.hitl import (
     approval_event_fields,
 )
 from bpg_temporal.metadata import (
+    TRACE_CONTEXT_PAYLOAD_KEY,
     TemporalMetadata,
     enrich_event_with_temporal_metadata,
     enrich_run_event_with_temporal_metadata,
     extract_temporal_metadata,
+    extract_trace_context,
+    inject_trace_context,
+    trace_context_carrier_from_payload,
 )
 from bpg_temporal.runtime import BpgWorkflow, LangGraphNodeWorkflow, TemporalRuntime
 
@@ -46,9 +50,13 @@ __all__ = [
     "PolicyEngine",
     "PolicyViolation",
     "TemporalExecutionBackend",
+    "TRACE_CONTEXT_PAYLOAD_KEY",
     "TemporalMetadata",
     "TemporalRuntime",
     "enrich_event_with_temporal_metadata",
     "enrich_run_event_with_temporal_metadata",
     "extract_temporal_metadata",
+    "extract_trace_context",
+    "inject_trace_context",
+    "trace_context_carrier_from_payload",
 ]

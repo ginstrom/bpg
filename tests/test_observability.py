@@ -433,6 +433,90 @@ def test_opentelemetry_sink_can_emit_raw_inputs_and_outputs_when_enabled():
     assert event_attrs["bpg.output"] == '{"summary":"hello"}'
 
 
+def test_opentelemetry_sink_emits_span_links_for_boundary_identifiers():
+    exporter = _otel_exporter()
+    sink = OpenTelemetryEventSink(
+        config=TracingConfig(enabled=True, exporter="none"),
+        span_exporter=exporter,
+    )
+    run_started = BpgEvent(
+        event_type="run_started",
+        run_id="run-otel-links",
+        process_name="otel-links",
+        process_version="v1",
+        process_hash="h1",
+        engine_backend="test",
+        temporal_workflow_id="wf-parent",
+        temporal_child_workflow_id="wf-child",
+        provider_job_id="job-42",
+    )
+    node_started = BpgEvent(
+        event_type="node_started",
+        run_id="run-otel-links",
+        process_name="otel-links",
+        process_version="v1",
+        process_hash="h1",
+        engine_backend="test",
+        node_id="worker",
+        temporal_activity_id="activity-1",
+        provider_job_id="job-42",
+        payload={"status": "running"},
+    )
+
+    sink.emit(run_started)
+    sink.emit(node_started)
+    sink.emit(node_started.model_copy(update={"event_type": "node_completed", "payload": {"status": "completed"}}))
+    sink.emit(run_started.model_copy(update={"event_type": "run_completed", "payload": {"status": "completed"}}))
+    sink.force_flush()
+
+    run_span = next(span for span in exporter.get_finished_spans() if span.name == "bpg.run otel-links")
+    node_span = next(span for span in exporter.get_finished_spans() if span.name == "bpg.node worker")
+    assert run_span.links
+    assert run_span.links[0].attributes["bpg.link.temporal_workflow_id"] == "wf-parent"
+    assert run_span.links[0].attributes["bpg.link.temporal_child_workflow_id"] == "wf-child"
+    assert run_span.links[0].attributes["bpg.link.provider_job_id"] == "job-42"
+    assert node_span.links[0].attributes["bpg.link.temporal_activity_id"] == "activity-1"
+
+
+def test_opentelemetry_sink_honors_propagated_parent_context():
+    from opentelemetry import trace
+    from opentelemetry.propagate import inject
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
+    exporter = _otel_exporter()
+    provider = TracerProvider(resource=Resource.create({"service.name": "parent"}))
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    parent_tracer = provider.get_tracer("parent")
+    carrier: dict[str, str] = {}
+    with parent_tracer.start_as_current_span("upstream"):
+        inject(carrier)
+
+    from bpg_temporal.metadata import extract_trace_context
+
+    sink = OpenTelemetryEventSink(
+        config=TracingConfig(enabled=True, exporter="none"),
+        span_exporter=exporter,
+        trace_parent_context=extract_trace_context(carrier),
+    )
+    run_started = BpgEvent(
+        event_type="run_started",
+        run_id="run-otel-propagated",
+        process_name="otel-propagated",
+        process_version="v1",
+        process_hash="h1",
+        engine_backend="test",
+    )
+    sink.emit(run_started)
+    sink.emit(run_started.model_copy(update={"event_type": "run_completed", "payload": {"status": "completed"}}))
+    sink.force_flush()
+
+    parent_span = next(span for span in exporter.get_finished_spans() if span.name == "upstream")
+    run_span = next(span for span in exporter.get_finished_spans() if span.name == "bpg.run otel-propagated")
+    assert format(run_span.context.trace_id, "032x") == format(parent_span.context.trace_id, "032x")
+
+
 def test_opentelemetry_export_failure_is_non_fatal():
     from opentelemetry.sdk.trace.export import SpanExporter
 
