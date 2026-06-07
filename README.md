@@ -140,6 +140,8 @@ See [LICENSE](LICENSE), [LICENSE-APACHE](LICENSE-APACHE), and [NOTICE](NOTICE).
   - [run](docs/cli/run.md)
   - [status](docs/cli/status.md)
   - [replay](docs/cli/replay.md)
+  - [audit](docs/cli/audit.md)
+  - [trace](docs/cli/trace.md)
   - [up](docs/cli/up.md)
   - [down](docs/cli/down.md)
   - [logs](docs/cli/logs.md)

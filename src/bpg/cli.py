@@ -34,6 +34,12 @@ app.add_typer(providers_app, name="providers")
 marketplace_app = typer.Typer(help="Marketplace artifact generation and validation.")
 app.add_typer(marketplace_app, name="marketplace")
 
+audit_app = typer.Typer(help="Audit ledger inspection and verification.", no_args_is_help=True)
+app.add_typer(audit_app, name="audit")
+
+trace_app = typer.Typer(help="OpenTelemetry trace correlation.", no_args_is_help=True)
+app.add_typer(trace_app, name="trace")
+
 console = Console()
 err_console = Console(stderr=True, style="bold red")
 
@@ -1012,6 +1018,260 @@ def replay(
     console.print(f"event_total={payload['event_total']}")
     for name, status in sorted(payload["node_statuses"].items()):
         console.print(f"- {name}: {status}")
+
+
+def _resolve_audit_sink_cli(
+    dsn: str | None,
+    dsn_env: str | None,
+):
+    from bpg.audit.inspection import AuditSinkResolutionError, resolve_audit_sink
+
+    try:
+        return resolve_audit_sink(dsn=dsn, dsn_env=dsn_env)
+    except AuditSinkResolutionError as exc:
+        err_console.print(str(exc))
+        raise typer.Exit(code=1)
+
+
+def _load_tracing_config(process_file: Path | None) -> "TracingConfig | None":
+    if process_file is None:
+        return None
+    from bpg.runtime.observability import TracingConfig
+
+    try:
+        process = parse_process_file(process_file)
+    except ParseError as exc:
+        err_console.print(f"Error parsing process file: {exc}")
+        raise typer.Exit(code=1)
+    return TracingConfig.from_mapping(process.model_dump(mode="json"))
+
+
+@audit_app.command("show")
+def audit_show(
+    run_id: str = typer.Argument(..., help="Run identifier."),
+    dsn: Optional[str] = typer.Option(
+        None,
+        "--dsn",
+        help="Postgres DSN for the audit ledger.",
+    ),
+    dsn_env: Optional[str] = typer.Option(
+        None,
+        "--dsn-env",
+        help="Environment variable containing the audit Postgres DSN.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable audit event JSON.",
+    ),
+) -> None:
+    """Print ordered audit events for one run."""
+    from bpg.audit.inspection import audit_event_summary, fetch_run_audit_rows
+
+    sink = _resolve_audit_sink_cli(dsn, dsn_env)
+    try:
+        rows = fetch_run_audit_rows(sink, run_id)
+    except ValueError as exc:
+        err_console.print(str(exc))
+        raise typer.Exit(code=1)
+
+    events = [audit_event_summary(row) for row in rows]
+    payload = {"run_id": run_id, "event_total": len(events), "events": events}
+    if json_output:
+        console.print_json(json.dumps(payload, sort_keys=True))
+        return
+
+    console.print(f"run_id={run_id} event_total={len(events)}")
+    for event in events:
+        console.print(
+            "sequence_id={sequence_id} event_type={event_type} occurred_at={occurred_at} "
+            "node={node_id} actor={actor_id} trace_id={trace_id} event_hash={event_hash}".format(
+                sequence_id=event["sequence_id"],
+                event_type=event["event_type"],
+                occurred_at=event["occurred_at"],
+                node_id=event["node_id"] or "-",
+                actor_id=event["actor_id"] or "-",
+                trace_id=event["trace_id"] or "-",
+                event_hash=event["event_hash"],
+            )
+        )
+
+
+@audit_app.command("verify")
+def audit_verify(
+    run_id: str = typer.Argument(..., help="Run identifier."),
+    dsn: Optional[str] = typer.Option(
+        None,
+        "--dsn",
+        help="Postgres DSN for the audit ledger.",
+    ),
+    dsn_env: Optional[str] = typer.Option(
+        None,
+        "--dsn-env",
+        help="Environment variable containing the audit Postgres DSN.",
+    ),
+    from_checkpoint: bool = typer.Option(
+        False,
+        "--from-checkpoint",
+        help="Verify only rows after the latest run checkpoint.",
+    ),
+    require_anchor: bool = typer.Option(
+        False,
+        "--require-anchor",
+        help="Fail when the latest checkpoint has no external anchor.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable verification JSON.",
+    ),
+) -> None:
+    """Recompute audit hashes and fail on chain mismatch."""
+    from bpg.audit.inspection import fetch_run_audit_rows, verification_to_dict, verify_run_audit_chain
+
+    sink = _resolve_audit_sink_cli(dsn, dsn_env)
+    try:
+        fetch_run_audit_rows(sink, run_id)
+    except ValueError as exc:
+        err_console.print(str(exc))
+        raise typer.Exit(code=1)
+
+    result = verify_run_audit_chain(
+        sink,
+        run_id,
+        from_checkpoint=from_checkpoint,
+        require_anchor=require_anchor,
+    )
+    payload = {"run_id": run_id, **verification_to_dict(result)}
+    if json_output:
+        console.print_json(json.dumps(payload, sort_keys=True))
+    else:
+        console.print(
+            f"run_id={run_id} ok={result.ok} checked={result.checked} message={result.message}"
+        )
+        if not result.ok and result.first_mismatch_sequence_id is not None:
+            console.print(
+                "mismatch sequence_id={sequence_id} expected={expected} actual={actual}".format(
+                    sequence_id=result.first_mismatch_sequence_id,
+                    expected=result.expected_hash or "-",
+                    actual=result.actual_hash or "-",
+                )
+            )
+    if not result.ok:
+        raise typer.Exit(code=1)
+
+
+@audit_app.command("export")
+def audit_export(
+    run_id: str = typer.Argument(..., help="Run identifier."),
+    output: Path = typer.Option(
+        ...,
+        "--output",
+        "-o",
+        help="Path where the audit evidence bundle will be written.",
+    ),
+    dsn: Optional[str] = typer.Option(
+        None,
+        "--dsn",
+        help="Postgres DSN for the audit ledger.",
+    ),
+    dsn_env: Optional[str] = typer.Option(
+        None,
+        "--dsn-env",
+        help="Environment variable containing the audit Postgres DSN.",
+    ),
+    from_checkpoint: bool = typer.Option(
+        False,
+        "--from-checkpoint",
+        help="Include verification from the latest run checkpoint.",
+    ),
+    require_anchor: bool = typer.Option(
+        False,
+        "--require-anchor",
+        help="Fail when the latest checkpoint has no external anchor.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Print the bundle JSON to stdout instead of writing a file.",
+    ),
+) -> None:
+    """Export an audit evidence bundle for one run."""
+    from bpg.audit.inspection import build_audit_export_bundle, write_audit_export_bundle
+
+    sink = _resolve_audit_sink_cli(dsn, dsn_env)
+    try:
+        bundle = build_audit_export_bundle(
+            sink,
+            run_id,
+            from_checkpoint=from_checkpoint,
+            require_anchor=require_anchor,
+        )
+    except ValueError as exc:
+        err_console.print(str(exc))
+        raise typer.Exit(code=1)
+
+    if json_output:
+        console.print_json(json.dumps(bundle, sort_keys=True, default=str))
+        return
+
+    write_audit_export_bundle(output, bundle)
+    console.print(f"[bold green]✓[/bold green] Wrote audit bundle to [cyan]{output}[/cyan]")
+
+
+@trace_app.command("show")
+def trace_show(
+    run_id: str = typer.Argument(..., help="Run identifier."),
+    process_file: Optional[Path] = typer.Option(
+        None,
+        "--process-file",
+        help=(
+            "Process definition file used to resolve tracing exporter settings. "
+            "Defaults to process.bpg.yaml or process.bpg.yml in current directory when omitted."
+        ),
+    ),
+    dsn: Optional[str] = typer.Option(
+        None,
+        "--dsn",
+        help="Postgres DSN for the audit ledger.",
+    ),
+    dsn_env: Optional[str] = typer.Option(
+        None,
+        "--dsn-env",
+        help="Environment variable containing the audit Postgres DSN.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable trace correlation JSON.",
+    ),
+) -> None:
+    """Print trace IDs and span correlation for one run."""
+    from bpg.audit.inspection import build_trace_summary, fetch_run_audit_rows
+
+    sink = _resolve_audit_sink_cli(dsn, dsn_env)
+    try:
+        rows = fetch_run_audit_rows(sink, run_id)
+    except ValueError as exc:
+        err_console.print(str(exc))
+        raise typer.Exit(code=1)
+
+    resolved_process_file = process_file
+    if resolved_process_file is None:
+        resolved_process_file = _find_default_process_file()
+    tracing_config = _load_tracing_config(resolved_process_file)
+    payload = build_trace_summary(rows, tracing_config=tracing_config)
+    if json_output:
+        console.print_json(json.dumps(payload, sort_keys=True))
+        return
+
+    console.print(f"run_id={run_id}")
+    console.print(f"trace_id={payload['trace_id'] or '-'}")
+    console.print(f"root_span_id={payload['root_span_id'] or '-'}")
+    if payload["exporter_target"]:
+        console.print(f"exporter_target={payload['exporter_target']}")
+    for node_id, span_id in payload["node_span_ids"].items():
+        console.print(f"node {node_id}: span_id={span_id}")
 
 
 @app.command()

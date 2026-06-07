@@ -12,7 +12,7 @@ The work should be delivered in order. Each step is self-contained enough to han
 - [x] [5. Audit Policy Controls](05-audit-policy-controls/index.md)
 - [x] [6. Temporal Metadata](06-temporal-metadata/index.md)
 - [x] [7. Checkpointing and Anchoring](07-checkpointing-and-anchoring/index.md)
-- [ ] [8. CLI Inspection and Verification](08-cli-inspection-and-verification/index.md)
+- [x] [8. CLI Inspection and Verification](08-cli-inspection-and-verification/index.md)
 - [ ] [9. Marketplace Helper Nodes](09-marketplace-helper-nodes/index.md)
 
 ## Delivery Principles
