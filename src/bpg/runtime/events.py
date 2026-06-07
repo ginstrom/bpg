@@ -101,6 +101,12 @@ class BpgEvent(BaseModel):
     temporal_workflow_id: str | None = None
     temporal_run_id: str | None = None
     temporal_activity_id: str | None = None
+    temporal_activity_type: str | None = None
+    temporal_attempt: int | None = None
+    temporal_task_queue: str | None = None
+    temporal_timer_id: str | None = None
+    temporal_signal_name: str | None = None
+    temporal_child_workflow_id: str | None = None
     provider_id: str | None = None
     provider_job_id: str | None = None
     artifact_name: str | None = None
@@ -223,6 +229,16 @@ def event_from_run_event(
         "node_package": event.get("node_package"),
         "correlation_id": event.get("correlation_id"),
         "causation_id": event.get("causation_id"),
+        "temporal_namespace": event.get("temporal_namespace"),
+        "temporal_workflow_id": event.get("temporal_workflow_id"),
+        "temporal_run_id": event.get("temporal_run_id"),
+        "temporal_activity_id": event.get("temporal_activity_id"),
+        "temporal_activity_type": event.get("temporal_activity_type"),
+        "temporal_attempt": event.get("temporal_attempt"),
+        "temporal_task_queue": event.get("temporal_task_queue"),
+        "temporal_timer_id": event.get("temporal_timer_id"),
+        "temporal_signal_name": event.get("temporal_signal_name"),
+        "temporal_child_workflow_id": event.get("temporal_child_workflow_id"),
         "provider_id": event.get("provider_id"),
         "provider_job_id": event.get("provider_job_id"),
         "actor_id": event.get("actor_id"),

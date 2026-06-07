@@ -17,6 +17,12 @@ from bpg_temporal.hitl import (
     ApprovalSignal,
     ApprovalState,
 )
+from bpg_temporal.metadata import (
+    TemporalMetadata,
+    enrich_event_with_temporal_metadata,
+    enrich_run_event_with_temporal_metadata,
+    extract_temporal_metadata,
+)
 from bpg_temporal.runtime import BpgWorkflow, LangGraphNodeWorkflow, TemporalRuntime
 
 LEGACY_RUNTIME_MODULE = "bpg.runtime.engine"
@@ -38,5 +44,9 @@ __all__ = [
     "PolicyEngine",
     "PolicyViolation",
     "TemporalExecutionBackend",
+    "TemporalMetadata",
     "TemporalRuntime",
+    "enrich_event_with_temporal_metadata",
+    "enrich_run_event_with_temporal_metadata",
+    "extract_temporal_metadata",
 ]

@@ -25,6 +25,19 @@ from bpg.runtime.expr import resolve_mapping
 from bpg.runtime.backends import canonical_backend_name, get_backend
 from bpg.runtime.events import normalize_event
 
+TEMPORAL_EVENT_FIELDS: tuple[str, ...] = (
+    "temporal_namespace",
+    "temporal_workflow_id",
+    "temporal_run_id",
+    "temporal_activity_id",
+    "temporal_activity_type",
+    "temporal_attempt",
+    "temporal_task_queue",
+    "temporal_timer_id",
+    "temporal_signal_name",
+    "temporal_child_workflow_id",
+)
+
 
 class EngineError(Exception):
     """Raised when the engine encounters an unrecoverable execution error."""
@@ -143,6 +156,7 @@ class Engine:
             input_payload=input_payload,
             cached_results=cached_results,
         )
+        temporal_event_fields = self._temporal_event_fields(final_state)
 
         self._state_store.append_execution_event(
             run_id,
@@ -155,6 +169,7 @@ class Engine:
                     ),
                     "status": "running",
                     "started_at": datetime.now(timezone.utc).isoformat(),
+                    **temporal_event_fields,
                 },
                 run_id=run_id,
             ),
@@ -195,6 +210,7 @@ class Engine:
                         ),
                         "status": run_status,
                         **artifact,
+                        **temporal_event_fields,
                         "artifact_path": artifact.get("path"),
                         "artifact_location": artifact.get("path"),
                     },
@@ -212,6 +228,7 @@ class Engine:
                     ),
                     "status": run_status,
                     "completed_at": datetime.now(timezone.utc).isoformat(),
+                    **temporal_event_fields,
                 },
                 run_id=run_id,
             ),
@@ -226,6 +243,19 @@ class Engine:
                 run_status=run_status,
                 execution_log=final_state.get("execution_log", []),
             )
+
+    def _temporal_event_fields(self, final_state: Dict[str, Any]) -> Dict[str, Any]:
+        temporal = final_state.get("temporal")
+        if not isinstance(temporal, dict):
+            return {}
+        fields: Dict[str, Any] = {}
+        for field in TEMPORAL_EVENT_FIELDS:
+            value = temporal.get(field)
+            if value is None:
+                value = temporal.get(field.removeprefix("temporal_"))
+            if value is not None:
+                fields[field] = value
+        return fields
 
     def _compute_idempotency_key(self, run_id: str, node_name: str, input_payload: Dict[str, Any]) -> str:
         """Compute the idempotency key for a node invocation.

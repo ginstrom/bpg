@@ -55,6 +55,10 @@ uv run pytest packages/bpg-temporal tests -k "temporal or tracing or audit"
 
 If full Temporal integration tests are not available locally, add mocked context unit tests and document the missing integration coverage.
 
+Current coverage uses mocked Temporal workflow/activity context and the existing
+`bpg-temporal` bridge runtime. A live Temporal worker integration test should be
+added once the repository has a local Temporal test service fixture.
+
 ## Out of Scope
 - Making Temporal history the audit ledger.
 - Adding Temporal-specific event types to the canonical contract unless they map to BPG semantics.

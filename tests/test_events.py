@@ -109,6 +109,13 @@ def test_run_event_adapter_builds_canonical_event_and_hashes_payloads():
             "process_name": "proc",
             "node": "extract",
             "timestamp": "2026-01-01T00:00:00+00:00",
+            "temporal_namespace": "default",
+            "temporal_workflow_id": "wf-1",
+            "temporal_run_id": "trun-1",
+            "temporal_activity_id": "act-1",
+            "temporal_activity_type": "BpgNodeActivity",
+            "temporal_attempt": 2,
+            "temporal_task_queue": "bpg-workers",
             "input": {"email": "hello"},
             "error": "temporary failure",
             "status": "running",
@@ -120,6 +127,11 @@ def test_run_event_adapter_builds_canonical_event_and_hashes_payloads():
 
     assert event.event_type == "node_retry_scheduled"
     assert event.node_id == "extract"
+    assert event.temporal_workflow_id == "wf-1"
+    assert event.temporal_activity_id == "act-1"
+    assert event.temporal_activity_type == "BpgNodeActivity"
+    assert event.temporal_attempt == 2
+    assert event.temporal_task_queue == "bpg-workers"
     assert event.input_sha256 == sha256_json({"email": "hello"})
     assert event.payload_sha256 == sha256_json(
         {"input": {"email": "hello"}, "error": "temporary failure", "status": "running"}

@@ -83,6 +83,12 @@ temporal_namespace
 temporal_workflow_id
 temporal_run_id
 temporal_activity_id
+temporal_activity_type
+temporal_attempt
+temporal_task_queue
+temporal_timer_id
+temporal_signal_name
+temporal_child_workflow_id
 provider_id
 provider_job_id
 artifact_name

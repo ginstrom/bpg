@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
+from bpg_temporal.metadata import extract_temporal_metadata
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -55,6 +57,7 @@ class ApprovalState:
     outcome: ApprovalOutcome = ApprovalOutcome.PENDING
     signal: ApprovalSignal | None = None
     created_at: str = field(default_factory=_utc_now)
+    temporal_metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def is_resolved(self) -> bool:
@@ -76,11 +79,19 @@ class ApprovalState:
             )
         self.outcome = signal.outcome
         self.signal = signal
+        self.temporal_metadata = extract_temporal_metadata(
+            workflow_id=self.request.workflow_id,
+            signal_name=f"approval.{signal.outcome.value}",
+        ).to_event_fields()
 
     def apply_timeout(self) -> None:
         if self.outcome != ApprovalOutcome.PENDING:
             return
         self.outcome = ApprovalOutcome.TIMED_OUT
+        self.temporal_metadata = extract_temporal_metadata(
+            workflow_id=self.request.workflow_id,
+            timer_id=f"approval.{self.request.request_id}.timeout",
+        ).to_event_fields()
 
 
 class ApprovalGate:
@@ -117,4 +128,5 @@ class ApprovalGate:
             "reason": s.signal.reason if s.signal else None,
             "created_at": s.created_at,
             "resolved_at": s.signal.timestamp if s.signal else None,
+            "temporal": dict(s.temporal_metadata),
         }

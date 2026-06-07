@@ -264,6 +264,13 @@ def test_opentelemetry_sink_exports_run_and_node_spans():
         node_type="triage_agent@v1",
         node_package="pkg",
         provider_id="agent.pipeline",
+        temporal_namespace="default",
+        temporal_workflow_id="wf-otel",
+        temporal_run_id="temporal-run-otel",
+        temporal_activity_id="activity-otel",
+        temporal_activity_type="BpgNodeActivity",
+        temporal_attempt=2,
+        temporal_task_queue="bpg-workers",
         input_sha256="input-hash",
         payload={"status": "running", "input": {"secret": "hidden"}},
     )
@@ -314,6 +321,12 @@ def test_opentelemetry_sink_exports_run_and_node_spans():
     assert run_span.attributes["bpg.run_id"] == "run-otel-1"
     assert node_span.attributes["bpg.node_id"] == "triage"
     assert node_span.attributes["bpg.provider_id"] == "agent.pipeline"
+    assert node_span.attributes["bpg.temporal.workflow_id"] == "wf-otel"
+    assert node_span.attributes["bpg.temporal.run_id"] == "temporal-run-otel"
+    assert node_span.attributes["bpg.temporal.activity_id"] == "activity-otel"
+    assert node_span.attributes["bpg.temporal.activity_type"] == "BpgNodeActivity"
+    assert node_span.attributes["bpg.temporal.attempt"] == 2
+    assert node_span.attributes["bpg.temporal.task_queue"] == "bpg-workers"
     assert "node_retry_scheduled" in [event.name for event in node_span.events]
     retry_event = next(event for event in node_span.events if event.name == "node_retry_scheduled")
     assert retry_event.attributes["bpg.retry.attempt"] == 1

@@ -319,6 +319,12 @@ def _event_attributes(
         "bpg.temporal.workflow_id": event.temporal_workflow_id,
         "bpg.temporal.run_id": event.temporal_run_id,
         "bpg.temporal.activity_id": event.temporal_activity_id,
+        "bpg.temporal.activity_type": event.temporal_activity_type,
+        "bpg.temporal.attempt": event.temporal_attempt,
+        "bpg.temporal.task_queue": event.temporal_task_queue,
+        "bpg.temporal.timer_id": event.temporal_timer_id,
+        "bpg.temporal.signal_name": event.temporal_signal_name,
+        "bpg.temporal.child_workflow_id": event.temporal_child_workflow_id,
         "bpg.provider_job_id": event.provider_job_id,
         "bpg.artifact.name": event.artifact_name,
         "bpg.artifact.sha256": event.artifact_sha256,
@@ -626,6 +632,21 @@ def event_to_run_event(event: BpgEvent) -> RunEvent:
             legacy[key] = payload[key]  # type: ignore[typeddict-unknown-key]
     if event.tags:
         legacy["tags"] = dict(event.tags)  # type: ignore[typeddict-unknown-key]
+    for key in (
+        "temporal_namespace",
+        "temporal_workflow_id",
+        "temporal_run_id",
+        "temporal_activity_id",
+        "temporal_activity_type",
+        "temporal_attempt",
+        "temporal_task_queue",
+        "temporal_timer_id",
+        "temporal_signal_name",
+        "temporal_child_workflow_id",
+    ):
+        value = getattr(event, key)
+        if value is not None:
+            legacy[key] = value  # type: ignore[typeddict-unknown-key]
     return legacy
 
 
