@@ -57,3 +57,9 @@ path = "packages/bpg-nodes-comm"
 owns = "Communication and integration nodes (email, HTTP, Kafka, Slack)."
 allowed_workspace_imports = ["bpg_sdk"]
 allowed_legacy_imports = []
+
+[packages.bpg_nodes_audit]
+path = "packages/bpg-nodes-audit"
+owns = "Optional audit reporting and compliance helper nodes."
+allowed_workspace_imports = ["bpg_sdk"]
+allowed_legacy_imports = ["bpg"]

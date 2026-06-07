@@ -13,7 +13,7 @@ The work should be delivered in order. Each step is self-contained enough to han
 - [x] [6. Temporal Metadata](06-temporal-metadata/index.md)
 - [x] [7. Checkpointing and Anchoring](07-checkpointing-and-anchoring/index.md)
 - [x] [8. CLI Inspection and Verification](08-cli-inspection-and-verification/index.md)
-- [ ] [9. Marketplace Helper Nodes](09-marketplace-helper-nodes/index.md)
+- [x] [9. Marketplace Helper Nodes](09-marketplace-helper-nodes/index.md)
 
 ## Delivery Principles
 - Runtime capture is mandatory for core tracing and audit events.

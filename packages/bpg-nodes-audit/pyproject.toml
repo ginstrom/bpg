@@ -1,0 +1,22 @@
+[project]
+name = "bpg-nodes-audit"
+version = "0.1.0"
+description = "Optional audit reporting and compliance helper nodes for BPG."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "bpg",
+    "bpg-sdk",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.17,<0.10.0"]
+build-backend = "uv_build"
+
+[project.entry-points."bpg.nodes"]
+"audit.export_bundle" = "bpg_nodes_audit:export_audit_bundle"
+"audit.verify_chain" = "bpg_nodes_audit:verify_audit_chain"
+"audit.write_compliance_summary" = "bpg_nodes_audit:write_compliance_summary"
+"audit.notify_compliance_channel" = "bpg_nodes_audit:notify_compliance_channel"
+"audit.create_case" = "bpg_nodes_audit:create_audit_case"
+"audit.attach_evidence" = "bpg_nodes_audit:attach_evidence_to_ticket"

@@ -1,0 +1,29 @@
+schema_version: 2
+process:
+  name: post-run-audit-reporting
+  trigger: verify
+  nodes:
+    verify:
+      ref:
+        package: bpg.nodes.audit@v1
+        node: audit.verify_chain
+      config:
+        run_id: "{{ inputs.run_id }}"
+    export:
+      ref:
+        package: bpg.nodes.audit@v1
+        node: audit.export_bundle
+      config:
+        run_id: "{{ inputs.run_id }}"
+    summarize:
+      ref:
+        package: bpg.nodes.audit@v1
+        node: audit.write_compliance_summary
+      config:
+        run_id: "{{ inputs.run_id }}"
+        format: markdown
+  edges:
+    - from: verify
+      to: export
+    - from: export
+      to: summarize

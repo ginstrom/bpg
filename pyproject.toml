@@ -43,6 +43,7 @@ dev = [
     "bpg-nodes-human",
     "bpg-nodes-search",
     "bpg-nodes-comm",
+    "bpg-nodes-audit",
     "pytest>=9.0.0",
     "pytest-cov>=7.0.0",
 ]
@@ -59,9 +60,11 @@ members = [
     "packages/bpg-nodes-human",
     "packages/bpg-nodes-search",
     "packages/bpg-nodes-comm",
+    "packages/bpg-nodes-audit",
 ]
 
 [tool.uv.sources]
+bpg = { workspace = true }
 bpg-core = { workspace = true }
 bpg-sdk = { workspace = true }
 bpg-temporal = { workspace = true }
@@ -72,6 +75,7 @@ bpg-nodes-ai = { workspace = true }
 bpg-nodes-human = { workspace = true }
 bpg-nodes-search = { workspace = true }
 bpg-nodes-comm = { workspace = true }
+bpg-nodes-audit = { workspace = true }
 
 [tool.pytest.ini_options]
 markers = [

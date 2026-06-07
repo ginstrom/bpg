@@ -121,6 +121,8 @@ See [LICENSE](LICENSE), [LICENSE-APACHE](LICENSE-APACHE), and [NOTICE](NOTICE).
   - [System Integration Tests](docs/guides/system_integration_tests.md)
 - Design:
   - [Traceability and Auditability](docs/design/traceability-and-auditability.md)
+- Marketplace:
+  - [Audit Helper Nodes](docs/marketplace/audit-helper-nodes.md)
 - Implementation Plans:
   - [Traceability and Auditability](docs/implementation/traceability-and-auditability/index.md)
 - Reference:
@@ -173,6 +175,7 @@ See [LICENSE](LICENSE), [LICENSE-APACHE](LICENSE-APACHE), and [NOTICE](NOTICE).
 - Search ingestion/retrieval graphs: [examples/search/README.md](examples/search/README.md)
 - Wrapper-focused examples: [examples/wrappers/README.md](examples/wrappers/README.md)
 - Gemini structured extraction with run artifacts: [examples/ai/gemini-imdb/README.md](examples/ai/gemini-imdb/README.md)
+- Audit compliance reporting helpers: [examples/audit/compliance-report/README.md](examples/audit/compliance-report/README.md)
 
 ## Local Development
 

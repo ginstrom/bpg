@@ -35,6 +35,7 @@ _FIRST_PARTY_PACKAGES = [
     ("bpg-nodes-human", "bpg.nodes.human@v1", REPO_ROOT / "packages" / "bpg-nodes-human"),
     ("bpg-nodes-search", "bpg.nodes.search@v1", REPO_ROOT / "packages" / "bpg-nodes-search"),
     ("bpg-nodes-comm", "bpg.nodes.comm@v1", REPO_ROOT / "packages" / "bpg-nodes-comm"),
+    ("bpg-nodes-audit", "bpg.nodes.audit@v1", REPO_ROOT / "packages" / "bpg-nodes-audit"),
 ]
 
 _EXPECTED_NODES_BY_PACKAGE: dict[str, list[str]] = {
@@ -61,6 +62,14 @@ _EXPECTED_NODES_BY_PACKAGE: dict[str, list[str]] = {
         "queue.kafka",
         "slack.interactive",
         "http.webhook",
+    ],
+    "bpg.nodes.audit@v1": [
+        "audit.export_bundle",
+        "audit.write_compliance_summary",
+        "audit.notify_compliance_channel",
+        "audit.create_case",
+        "audit.attach_evidence",
+        "audit.verify_chain",
     ],
 }
 
@@ -374,6 +383,7 @@ def test_marketplace_install_spec_derived_correctly() -> None:
         "bpg.nodes.human@v1": "bpg-nodes-human",
         "bpg.nodes.search@v1": "bpg-nodes-search",
         "bpg.nodes.comm@v1": "bpg-nodes-comm",
+        "bpg.nodes.audit@v1": "bpg-nodes-audit",
     }
     for artifact in artifacts:
         if artifact.package_id in expected_package_names:

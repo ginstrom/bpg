@@ -1,0 +1,46 @@
+schema_version: 2
+process:
+  name: compliance-report
+  trigger: ingest
+  nodes:
+    ingest:
+      ref:
+        package: bpg.nodes.core@v1
+        node: passthrough
+    verify:
+      ref:
+        package: bpg.nodes.audit@v1
+        node: audit.verify_chain
+    export:
+      ref:
+        package: bpg.nodes.audit@v1
+        node: audit.export_bundle
+    summarize:
+      ref:
+        package: bpg.nodes.audit@v1
+        node: audit.write_compliance_summary
+    notify:
+      ref:
+        package: bpg.nodes.audit@v1
+        node: audit.notify_compliance_channel
+    case:
+      ref:
+        package: bpg.nodes.audit@v1
+        node: audit.create_case
+    attach:
+      ref:
+        package: bpg.nodes.audit@v1
+        node: audit.attach_evidence
+  edges:
+    - from: ingest
+      to: verify
+    - from: verify
+      to: export
+    - from: export
+      to: summarize
+    - from: summarize
+      to: notify
+    - from: notify
+      to: case
+    - from: case
+      to: attach

@@ -14,6 +14,7 @@ members = [
     "bpg-core",
     "bpg-langgraph",
     "bpg-nodes-ai",
+    "bpg-nodes-audit",
     "bpg-nodes-comm",
     "bpg-nodes-core",
     "bpg-nodes-human",
@@ -76,6 +77,7 @@ dev = [
     { name = "bpg-core" },
     { name = "bpg-langgraph" },
     { name = "bpg-nodes-ai" },
+    { name = "bpg-nodes-audit" },
     { name = "bpg-nodes-comm" },
     { name = "bpg-nodes-core" },
     { name = "bpg-nodes-human" },
@@ -106,6 +108,7 @@ dev = [
     { name = "bpg-core", editable = "packages/bpg-core" },
     { name = "bpg-langgraph", editable = "packages/bpg-langgraph" },
     { name = "bpg-nodes-ai", editable = "packages/bpg-nodes-ai" },
+    { name = "bpg-nodes-audit", editable = "packages/bpg-nodes-audit" },
     { name = "bpg-nodes-comm", editable = "packages/bpg-nodes-comm" },
     { name = "bpg-nodes-core", editable = "packages/bpg-nodes-core" },
     { name = "bpg-nodes-human", editable = "packages/bpg-nodes-human" },
@@ -157,6 +160,21 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "bpg-sdk", editable = "packages/bpg-sdk" }]
+
+[[package]]
+name = "bpg-nodes-audit"
+version = "0.1.0"
+source = { editable = "packages/bpg-nodes-audit" }
+dependencies = [
+    { name = "bpg" },
+    { name = "bpg-sdk" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "bpg", editable = "." },
+    { name = "bpg-sdk", editable = "packages/bpg-sdk" },
+]
 
 [[package]]
 name = "bpg-nodes-comm"
