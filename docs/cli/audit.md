@@ -38,6 +38,13 @@ uv run bpg audit verify <run-id>
 
 # Export an evidence bundle
 uv run bpg audit export <run-id> --output /tmp/bpg-audit-bundle.json
+
+# Create a run-scoped checkpoint
+uv run bpg audit checkpoint create --scope run:<run-id> --json
+
+# Create a checkpoint with a local-file anchor
+uv run bpg audit checkpoint create --scope run:<run-id> \
+  --anchor-provider local-file --anchor-dir /tmp/bpg-audit-anchors
 ```
 
 ## Commands
@@ -50,6 +57,9 @@ Recompute payload and event hashes for the run-scoped chain. Returns a non-zero 
 ### `bpg audit export <run-id> --output <path>`
 Write a deterministic JSON bundle containing audit rows, checkpoint data, process hash/version, trace IDs, verification results, and optional Temporal identifiers found in payloads.
 
+### `bpg audit checkpoint create --scope <scope>`
+Create an audit chain checkpoint for `run:<run-id>` or `global`. Returns checkpoint ID, chain head hash, optional anchor reference, and signature.
+
 ## Options
 - `run_id`: Target run identifier.
 - `--dsn`: Postgres DSN for the audit ledger.
@@ -58,6 +68,10 @@ Write a deterministic JSON bundle containing audit rows, checkpoint data, proces
 - `--from-checkpoint`: Verify or export using only rows after the latest `run:<run-id>` checkpoint.
 - `--require-anchor`: Fail when the latest checkpoint has no external anchor reference.
 - `--output` / `-o`: Output path for `audit export`.
+- `--scope`: Checkpoint scope (`run:<run-id>` or `global`) for `audit checkpoint create`.
+- `--anchor-provider`: External anchor provider (`none` or `local-file`).
+- `--anchor-dir`: Directory for `local-file` anchors.
+- `--signing-key-env`: Environment variable containing the checkpoint signing key.
 
 ## Related pages
 - [CLI: bpg trace](trace.md)

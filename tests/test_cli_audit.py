@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from bpg.audit import AuditPolicyConfig, build_audit_record, verify_audit_chain
+from bpg.audit import AuditChainCheckpoint, AuditPolicyConfig, build_audit_record, verify_audit_chain
 from bpg.cli import app
 from bpg.runtime.events import canonical_json
 
@@ -69,6 +69,19 @@ class _FakeAuditSink:
 
     def verify_from_latest_checkpoint(self, run_id: str, **kwargs):
         return self.verify_run(run_id, **kwargs)
+
+    def create_checkpoint(self, *, scope: str, run_id: str | None = None, **kwargs):
+        checkpoint = AuditChainCheckpoint(
+            checkpoint_id=1,
+            created_at="2026-06-07T00:00:00+00:00",
+            scope=scope,
+            last_sequence_id=self._rows[-1]["sequence_id"],
+            chain_head_hash=self._rows[-1]["event_hash"],
+            anchored_ref=kwargs.get("anchored_ref"),
+            signature="sig-test",
+        )
+        self._checkpoints.append(checkpoint)
+        return checkpoint
 
 
 @pytest.fixture
@@ -190,6 +203,40 @@ def test_trace_show_json_includes_span_correlation(fake_sink):
     assert payload["trace_id"] == "trace-root"
     assert payload["root_span_id"] == "span-root"
     assert payload["node_span_ids"]["triage"] == "span-triage"
+
+
+def test_audit_checkpoint_create_run_scope(fake_sink):
+    result = runner.invoke(
+        app,
+        ["audit", "checkpoint", "create", "--scope", "run:run-1", "--json"],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["scope"] == "run:run-1"
+    assert payload["checkpoint_id"] == 1
+    assert payload["last_sequence_id"] == 2
+    assert payload["chain_head_hash"]
+
+
+def test_audit_checkpoint_create_global_scope(fake_sink):
+    result = runner.invoke(
+        app,
+        ["audit", "checkpoint", "create", "--scope", "global", "--json"],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["scope"] == "global"
+
+
+def test_audit_checkpoint_create_requires_dsn(monkeypatch):
+    monkeypatch.delenv("BPG_AUDIT_DATABASE_URL", raising=False)
+
+    result = runner.invoke(
+        app,
+        ["audit", "checkpoint", "create", "--scope", "run:run-1"],
+    )
+    assert result.exit_code == 1
+    assert "BPG_AUDIT_DATABASE_URL" in result.stderr
 
 
 def test_audit_show_requires_dsn(monkeypatch):

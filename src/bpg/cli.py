@@ -37,6 +37,9 @@ app.add_typer(marketplace_app, name="marketplace")
 audit_app = typer.Typer(help="Audit ledger inspection and verification.", no_args_is_help=True)
 app.add_typer(audit_app, name="audit")
 
+checkpoint_app = typer.Typer(help="Audit chain checkpoint operations.", no_args_is_help=True)
+audit_app.add_typer(checkpoint_app, name="checkpoint")
+
 trace_app = typer.Typer(help="OpenTelemetry trace correlation.", no_args_is_help=True)
 app.add_typer(trace_app, name="trace")
 
@@ -1217,6 +1220,104 @@ def audit_export(
 
     write_audit_export_bundle(output, bundle)
     console.print(f"[bold green]✓[/bold green] Wrote audit bundle to [cyan]{output}[/cyan]")
+
+
+@checkpoint_app.command("create")
+def audit_checkpoint_create(
+    scope: str = typer.Option(
+        ...,
+        "--scope",
+        help="Checkpoint scope, for example run:<run-id> or global.",
+    ),
+    dsn: Optional[str] = typer.Option(
+        None,
+        "--dsn",
+        help="Postgres DSN for the audit ledger.",
+    ),
+    dsn_env: Optional[str] = typer.Option(
+        None,
+        "--dsn-env",
+        help="Environment variable containing the audit Postgres DSN.",
+    ),
+    anchor_provider: str = typer.Option(
+        "none",
+        "--anchor-provider",
+        help="External anchor provider: none or local-file.",
+    ),
+    anchor_dir: Optional[Path] = typer.Option(
+        None,
+        "--anchor-dir",
+        help="Directory for local-file checkpoint anchors.",
+    ),
+    signing_key_env: Optional[str] = typer.Option(
+        None,
+        "--signing-key-env",
+        help="Environment variable containing the checkpoint signing key.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit structured checkpoint JSON.",
+    ),
+) -> None:
+    """Create an audit chain checkpoint for a run or the global ledger."""
+    import os
+
+    from bpg.audit.postgres import LocalFileCheckpointAnchorProvider, NoopCheckpointAnchorProvider
+
+    sink = _resolve_audit_sink_cli(dsn, dsn_env)
+    run_id: str | None = None
+    checkpoint_scope = scope
+    if scope.startswith("run:"):
+        run_id = scope.removeprefix("run:")
+        checkpoint_scope = f"run:{run_id}"
+    elif scope != "global":
+        err_console.print("scope must be global or run:<run-id>")
+        raise typer.Exit(code=1)
+
+    if anchor_provider == "local-file":
+        if anchor_dir is None:
+            err_console.print("--anchor-dir is required when --anchor-provider=local-file")
+            raise typer.Exit(code=1)
+        provider = LocalFileCheckpointAnchorProvider(anchor_dir)
+    elif anchor_provider == "none":
+        provider = NoopCheckpointAnchorProvider()
+    else:
+        err_console.print("anchor-provider must be one of: none, local-file")
+        raise typer.Exit(code=1)
+
+    signing_key = os.getenv(signing_key_env) if signing_key_env else None
+    try:
+        checkpoint = sink.create_checkpoint(
+            scope=checkpoint_scope,
+            run_id=run_id,
+            anchor_provider=provider,
+            signing_key=signing_key,
+        )
+    except ValueError as exc:
+        err_console.print(str(exc))
+        raise typer.Exit(code=1)
+
+    payload = {
+        "checkpoint_id": checkpoint.checkpoint_id,
+        "scope": checkpoint.scope,
+        "last_sequence_id": checkpoint.last_sequence_id,
+        "chain_head_hash": checkpoint.chain_head_hash,
+        "anchored_ref": checkpoint.anchored_ref,
+        "signature": checkpoint.signature,
+    }
+    if json_output:
+        console.print_json(json.dumps(payload, sort_keys=True, default=str))
+        return
+
+    console.print(f"[bold green]✓[/bold green] Created checkpoint {checkpoint.checkpoint_id}")
+    console.print(f"scope={checkpoint.scope}")
+    console.print(f"last_sequence_id={checkpoint.last_sequence_id}")
+    console.print(f"chain_head_hash={checkpoint.chain_head_hash}")
+    if checkpoint.anchored_ref:
+        console.print(f"anchored_ref={checkpoint.anchored_ref}")
+    else:
+        console.print("anchored_ref=- (reduced external assurance)")
 
 
 @trace_app.command("show")
