@@ -41,7 +41,8 @@ from bpg.providers.base import (
     compute_idempotency_key,
 )
 from bpg.runtime.expr import eval_when, resolve_mapping
-from bpg.runtime.observability import EventSink, NoopEventSink, RunEvent
+from bpg.runtime.events import BpgEvent, sha256_json
+from bpg.runtime.observability import EventSink, NoopEventSink, RunEvent, run_event_to_event
 from bpg.runtime.state import RunState
 
 
@@ -197,6 +198,12 @@ class LangGraphRuntime:
         self._providers = providers
         self._checkpointer = checkpointer
         self._sink: EventSink = event_sink if event_sink is not None else NoopEventSink()
+        metadata = self._ir.process.metadata
+        self._process_version = metadata.version if metadata else "unknown"
+        self._process_hash = sha256_json(
+            self._ir.process.model_dump(mode="json", by_alias=True, exclude_none=True)
+        )
+        self._engine_backend = "langgraph"
         self._result_cache: Dict[str, Dict[str, Any]] = dict(initial_result_cache or {})
         self._cancel_events: Dict[str, threading.Event] = {}
         self._inflight_handles: Dict[str, tuple[Provider, Any]] = {}
@@ -478,16 +485,23 @@ class LangGraphRuntime:
             with self._runtime_lock:
                 cancel_event = self._cancel_events.setdefault(run_id, threading.Event())
 
-            def _base_event(**extra) -> RunEvent:
-                """Build a RunEvent with the fields common to every transition."""
+            def _base_event(**extra) -> BpgEvent:
+                """Build a canonical event with fields common to every transition."""
                 ev: RunEvent = {
                     "run_id": run_id,
                     "process_name": process_name,
                     "node": node_name,
+                    "node_type": resolved_node.instance.node_type,
+                    "provider_id": resolved_node.node_type.provider,
                     "timestamp": _now_iso(),
                 }
                 ev.update(extra)  # type: ignore[typeddict-item]
-                return ev
+                return run_event_to_event(
+                    ev,
+                    process_version=self._process_version,
+                    process_hash=self._process_hash,
+                    engine_backend=self._engine_backend,
+                )
 
             if state.get("run_status") == NodeStatus.FAILED.value:
                 return {
@@ -597,6 +611,29 @@ class LangGraphRuntime:
                     "execution_log": [log_entry],
                     "failure_routes": {},
                 }
+
+            # ----------------------------------------------------------
+            # Emit edge selection events
+            # ----------------------------------------------------------
+            if failure_input is not None:
+                sink.emit(_base_event(
+                    event_type="edge_fired",
+                    status=NodeStatus.RUNNING.value,
+                    edge_source="failure_route",
+                    edge_target=node_name,
+                    route_kind="failure",
+                    timestamp=_now_iso(),
+                ))
+            else:
+                for resolved_edge in firing_edges:
+                    sink.emit(_base_event(
+                        event_type="edge_fired",
+                        status=NodeStatus.RUNNING.value,
+                        edge_source=resolved_edge.edge.source,
+                        edge_target=node_name,
+                        edge_when=resolved_edge.edge.when,
+                        timestamp=_now_iso(),
+                    ))
 
             # ----------------------------------------------------------
             # Resolve input payload
@@ -727,10 +764,11 @@ class LangGraphRuntime:
                             "error": err_msg,
                         }
                         sink.emit(_base_event(
-                            event_type="node_failed",
+                            event_type="policy_blocked",
                             status=NodeStatus.FAILED.value,
                             error=err_msg,
                             error_code="policy_access_denied",
+                            policy_id="access_control",
                             timestamp=ts,
                         ))
                         return {
@@ -758,10 +796,11 @@ class LangGraphRuntime:
                             "error": err_msg,
                         }
                         sink.emit(_base_event(
-                            event_type="node_failed",
+                            event_type="policy_blocked",
                             status=NodeStatus.FAILED.value,
                             error=err_msg,
                             error_code="policy_separation_of_duties",
+                            policy_id="separation_of_duties",
                             timestamp=ts,
                         ))
                         return {
@@ -809,10 +848,11 @@ class LangGraphRuntime:
                             "error": err_msg,
                         }
                         sink.emit(_base_event(
-                            event_type="node_failed",
+                            event_type="policy_blocked",
                             status=NodeStatus.FAILED.value,
                             error=err_msg,
                             error_code="policy_separation_of_duties",
+                            policy_id="separation_of_duties",
                             timestamp=ts,
                         ))
                         return {
@@ -865,6 +905,13 @@ class LangGraphRuntime:
                 redacted_input = _redact(input_payload)
                 redacted_output = _redact(cached_output)
                 sink.emit(_base_event(
+                    event_type="node_scheduled",
+                    status=NodeStatus.RUNNING.value,
+                    input=redacted_input,
+                    idempotency_key=idempotency_key,
+                    timestamp=ts,
+                ))
+                sink.emit(_base_event(
                     event_type="node_completed",
                     status=NodeStatus.COMPLETED.value,
                     input=redacted_input,
@@ -909,6 +956,13 @@ class LangGraphRuntime:
             initial_delay_s = initial_delay_s if initial_delay_s is not None else _RETRY_INITIAL_DELAY_DEFAULT
             max_delay_s = max_delay_s if max_delay_s is not None else _RETRY_MAX_DELAY_DEFAULT
 
+            sink.emit(_base_event(
+                event_type="node_scheduled",
+                status=NodeStatus.RUNNING.value,
+                input=_redact(input_payload),
+                idempotency_key=idempotency_key,
+            ))
+
             # node_started — emitted once before the first attempt
             sink.emit(_base_event(
                 event_type="node_started",
@@ -925,6 +979,13 @@ class LangGraphRuntime:
             for _attempt in range(max_attempts):
                 attempts_used = _attempt + 1
                 if provider_id in _HUMAN_PROVIDER_IDS:
+                    if _attempt == 0:
+                        sink.emit(_base_event(
+                            event_type="approval_requested",
+                            status=NodeStatus.RUNNING.value,
+                            input=_redact(input_payload),
+                            idempotency_key=idempotency_key,
+                        ))
                     try:
                         handle = provider.invoke(
                             input_payload, dict(resolved_node.instance.config), context
@@ -1000,7 +1061,7 @@ class LangGraphRuntime:
                         _attempt, backoff_strategy, initial_delay_s, max_delay_s
                     )
                     sink.emit(_base_event(
-                        event_type="node_retrying",
+                        event_type="node_retry_scheduled",
                         status=NodeStatus.RUNNING.value,
                         attempt=_attempt + 1,
                         delay_seconds=delay,
@@ -1021,6 +1082,14 @@ class LangGraphRuntime:
 
                 ts = _now_iso()
                 redacted_input = _redact(input_payload)
+                if provider_id in _HUMAN_PROVIDER_IDS:
+                    sink.emit(_base_event(
+                        event_type="approval_timed_out",
+                        status=NodeStatus.TIMED_OUT.value,
+                        input=redacted_input,
+                        idempotency_key=idempotency_key,
+                        timestamp=ts,
+                    ))
                 if timeout_output is not None:
                     # Spec §9: on_timeout.out continues the run; treat as completed
                     # for routing, but mark synthetic=True in the log for audit.
@@ -1037,7 +1106,7 @@ class LangGraphRuntime:
                         "idempotency_key": idempotency_key,
                     }
                     sink.emit(_base_event(
-                        event_type="node_timed_out",
+                        event_type="node_failed",
                         status=NodeStatus.TIMED_OUT.value,
                         effective_status=NodeStatus.COMPLETED.value,
                         synthetic=True,
@@ -1070,7 +1139,7 @@ class LangGraphRuntime:
                         "idempotency_key": idempotency_key,
                     }
                     sink.emit(_base_event(
-                        event_type="node_timed_out",
+                        event_type="node_failed",
                         status=NodeStatus.TIMED_OUT.value,
                         input=redacted_input,
                         idempotency_key=idempotency_key,
@@ -1208,6 +1277,22 @@ class LangGraphRuntime:
             ts = _now_iso()
             redacted_input = _redact(input_payload)
             redacted_output = _redact(output)
+            if provider_id in _HUMAN_PROVIDER_IDS and output is not None:
+                decision = (
+                    "approved"
+                    if output.get("approved") is True
+                    else "rejected"
+                    if output.get("approved") is False
+                    else "resolved"
+                )
+                sink.emit(_base_event(
+                    event_type="approval_resolved",
+                    status=NodeStatus.COMPLETED.value,
+                    output=redacted_output,
+                    decision=decision,
+                    idempotency_key=idempotency_key,
+                    timestamp=ts,
+                ))
             log_entry = {
                 "node": node_name,
                 "status": NodeStatus.COMPLETED.value,
@@ -1263,6 +1348,17 @@ class LangGraphRuntime:
             if self._ir.process.metadata
             else self._ir.process.trigger
         )
+        self._sink.emit(
+            BpgEvent(
+                event_type="run_started",
+                run_id=run_id,
+                process_name=process_name,
+                process_version=self._process_version,
+                process_hash=self._process_hash,
+                engine_backend=self._engine_backend,
+                payload={"status": "running"},
+            )
+        )
 
         # Validate trigger input against the effective input type.
         # When the trigger node's in_type has no fields (e.g. opaque ``object``),
@@ -1316,6 +1412,21 @@ class LangGraphRuntime:
                 final_state["run_status"] = NodeStatus.FAILED.value
             else:
                 final_state["run_status"] = NodeStatus.COMPLETED.value
+        self._sink.emit(
+            BpgEvent(
+                event_type=(
+                    "run_completed"
+                    if final_state.get("run_status") == NodeStatus.COMPLETED.value
+                    else "run_failed"
+                ),
+                run_id=run_id,
+                process_name=process_name,
+                process_version=self._process_version,
+                process_hash=self._process_hash,
+                engine_backend=self._engine_backend,
+                payload={"status": final_state.get("run_status", "completed")},
+            )
+        )
         if self._ir.process.policy and self._ir.process.policy.audit:
             audit = self._ir.process.policy.audit
             audit_record = {
@@ -1324,15 +1435,25 @@ class LangGraphRuntime:
                 "tags": dict(audit.tags or {}),
                 "emitted_at": _now_iso(),
             }
-            self._sink.emit({
-                "event_type": "run_audit",
-                "run_id": run_id,
-                "process_name": process_name,
-                "node": "__process__",
-                "timestamp": audit_record["emitted_at"],
-                "status": final_state.get("run_status", "completed"),
-                "tags": audit_record["tags"],
-            })
+            self._sink.emit(
+                BpgEvent(
+                    event_type="policy_checked",
+                    occurred_at=audit_record["emitted_at"],
+                    run_id=run_id,
+                    process_name=process_name,
+                    process_version=self._process_version,
+                    process_hash=self._process_hash,
+                    engine_backend=self._engine_backend,
+                    node_id="__process__",
+                    policy_id="audit",
+                    payload={
+                        "status": final_state.get("run_status", "completed"),
+                        "retention": audit_record["retention"],
+                        "export_to": audit_record["export_to"],
+                    },
+                    tags=audit_record["tags"],
+                )
+            )
             final_state["audit"] = audit_record
         with self._runtime_lock:
             self._cancel_events.pop(run_id, None)

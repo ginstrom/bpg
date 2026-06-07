@@ -25,7 +25,19 @@ from bpg.runtime.langgraph_runtime import (
     LangGraphRuntime,
     _compute_retry_delay,
 )
-from bpg.runtime.observability import ListEventSink, replay_run
+from bpg.runtime.events import BpgEvent
+from bpg.audit.postgres import PostgresAuditEventSink
+from bpg.compiler.parser import parse_process_file
+from bpg.runtime.observability import (
+    EventSinkGroup,
+    ListEventSink,
+    NoopEventSink,
+    OpenTelemetryEventSink,
+    TracingConfig,
+    build_observability_sink,
+    build_runtime_event_sink,
+    replay_run,
+)
 
 _PROCESS_FILE = Path(__file__).resolve().parents[1] / "process.bpg.yaml"
 
@@ -89,22 +101,37 @@ def test_events_emitted_on_success(ir):
 
     types = [e["event_type"] for e in sink.events]
 
-    # Trigger fires as node_completed without node_started
-    assert types[0] == "node_completed"
-    assert sink.events[0]["node"] == "intake_form"
+    assert types[0] == "run_started"
+    assert types[-1] == "run_completed"
 
-    # triage: started → completed
+    # Trigger fires as node_completed without node_started
+    trigger_events = sink.for_node("intake_form")
+    assert trigger_events[0]["event_type"] == "node_completed"
+    assert sink.canonical_events[0].event_type == "run_started"
+    assert isinstance(sink.canonical_events[0], BpgEvent)
+
+    # triage: edge → scheduled → started → completed
     triage_events = sink.for_node("triage")
-    assert [e["event_type"] for e in triage_events] == ["node_started", "node_completed"]
+    assert [e["event_type"] for e in triage_events] == [
+        "edge_fired",
+        "node_scheduled",
+        "node_started",
+        "node_completed",
+    ]
 
     # approval: skipped (no node_started because no invocation)
     approval_events = sink.for_node("approval")
     assert len(approval_events) == 1
     assert approval_events[0]["event_type"] == "node_skipped"
 
-    # gitlab: started → completed
+    # gitlab: edge → scheduled → started → completed
     gitlab_events = sink.for_node("gitlab")
-    assert [e["event_type"] for e in gitlab_events] == ["node_started", "node_completed"]
+    assert [e["event_type"] for e in gitlab_events] == [
+        "edge_fired",
+        "node_scheduled",
+        "node_started",
+        "node_completed",
+    ]
 
     # Every completed event has the required fields
     for ev in sink.by_type("node_completed"):
@@ -119,7 +146,7 @@ def test_events_emitted_on_success(ir):
 
 
 def test_retry_events_and_backoff(ir):
-    """node_retrying events carry attempt/delay; time.sleep is called."""
+    """node_retry_scheduled events carry attempt/delay; time.sleep is called."""
     mock = MockProvider()
     # Register a retryable error so all attempts fail
     mock.register_error(
@@ -154,9 +181,9 @@ def test_retry_events_and_backoff(ir):
     triage_events = sink.for_node("triage")
     event_types = [e["event_type"] for e in triage_events]
 
-    # node_started → node_retrying × 2 → node_failed
-    assert event_types[0] == "node_started"
-    retrying = [e for e in triage_events if e["event_type"] == "node_retrying"]
+    # edge → scheduled → started → retry × 2 → failed
+    assert event_types[:3] == ["edge_fired", "node_scheduled", "node_started"]
+    retrying = [e for e in triage_events if e["event_type"] == "node_retry_scheduled"]
     assert len(retrying) == 2  # 3 attempts → 2 retries between them
     assert event_types[-1] == "node_failed"
 
@@ -178,8 +205,370 @@ def test_retry_events_and_backoff(ir):
     assert state["node_statuses"]["triage"] == NodeStatus.FAILED.value
 
 
+def test_event_sink_group_preserves_order():
+    event = BpgEvent(
+        event_type="run_started",
+        run_id="r1",
+        process_name="p1",
+        process_version="v1",
+        process_hash="h1",
+        engine_backend="test",
+    )
+    calls: list[str] = []
+
+    class RecordingSink(ListEventSink):
+        def __init__(self, name: str) -> None:
+            super().__init__()
+            self._name = name
+
+        def emit(self, event: BpgEvent) -> None:
+            calls.append(self._name)
+            super().emit(event)
+
+    first = RecordingSink("first")
+    second = RecordingSink("second")
+    EventSinkGroup([first, second]).emit(event)
+
+    assert calls == ["first", "second"]
+    assert first.canonical_events == [event]
+    assert second.canonical_events == [event]
+
+
 # ---------------------------------------------------------------------------
-# 4. replay_run reconstructs events from execution_log
+# 4. OpenTelemetry tracing sink
+# ---------------------------------------------------------------------------
+
+
+def _otel_exporter():
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    return InMemorySpanExporter()
+
+
+def test_tracing_is_disabled_by_default():
+    sink = build_observability_sink(None)
+
+    assert isinstance(sink, NoopEventSink)
+
+
+def test_build_runtime_event_sink_without_observability(ir):
+    sink = build_runtime_event_sink(ir.process)
+
+    assert isinstance(sink, NoopEventSink)
+
+
+def test_build_runtime_event_sink_registers_audit_sink():
+    fixtures = Path(__file__).resolve().parent / "fixtures" / "audit_policy"
+    process = parse_process_file(fixtures / "enabled.bpg.yaml")
+
+    sink = build_runtime_event_sink(
+        process.model_copy(
+            update={
+                "observability": process.observability.model_copy(
+                    update={"audit": process.observability.audit.model_copy(update={"dsn": "postgresql://example"})}
+                )
+            }
+        )
+    )
+
+    assert isinstance(sink, PostgresAuditEventSink)
+
+
+def test_build_runtime_event_sink_returns_noop_when_audit_disabled():
+    fixtures = Path(__file__).resolve().parent / "fixtures" / "audit_policy"
+    process = parse_process_file(fixtures / "enabled.bpg.yaml")
+
+    sink = build_runtime_event_sink(
+        process.model_copy(
+            update={
+                "observability": process.observability.model_copy(
+                    update={
+                        "audit": process.observability.audit.model_copy(
+                            update={"enabled": False, "dsn": "postgresql://example"}
+                        )
+                    }
+                )
+            }
+        )
+    )
+
+    assert isinstance(sink, NoopEventSink)
+
+
+def test_opentelemetry_sink_exports_run_and_node_spans():
+    exporter = _otel_exporter()
+    sink = OpenTelemetryEventSink(
+        config=TracingConfig(enabled=True, exporter="none"),
+        span_exporter=exporter,
+    )
+    run_started = BpgEvent(
+        event_type="run_started",
+        run_id="run-otel-1",
+        process_name="otel-process",
+        process_version="v1",
+        process_hash="h1",
+        engine_backend="test",
+        payload={"status": "running"},
+    )
+    node_started = BpgEvent(
+        event_type="node_started",
+        run_id="run-otel-1",
+        process_name="otel-process",
+        process_version="v1",
+        process_hash="h1",
+        engine_backend="test",
+        node_id="triage",
+        node_type="triage_agent@v1",
+        node_package="pkg",
+        provider_id="agent.pipeline",
+        temporal_namespace="default",
+        temporal_workflow_id="wf-otel",
+        temporal_run_id="temporal-run-otel",
+        temporal_activity_id="activity-otel",
+        temporal_activity_type="BpgNodeActivity",
+        temporal_attempt=2,
+        temporal_task_queue="bpg-workers",
+        input_sha256="input-hash",
+        payload={"status": "running", "input": {"secret": "hidden"}},
+    )
+    retry = node_started.model_copy(
+        update={
+            "event_id": "retry-event",
+            "event_type": "node_retry_scheduled",
+            "payload": {
+                "status": "running",
+                "attempt": 1,
+                "delay_seconds": 0.5,
+                "error": "rate limited",
+                "error_code": "rate_limit",
+            },
+        }
+    )
+    node_completed = node_started.model_copy(
+        update={
+            "event_id": "node-completed",
+            "event_type": "node_completed",
+            "output_sha256": "output-hash",
+            "payload": {"status": "completed", "output": {"result": "ok"}},
+        }
+    )
+    run_completed = run_started.model_copy(
+        update={
+            "event_id": "run-completed",
+            "event_type": "run_completed",
+            "payload": {"status": "completed"},
+        }
+    )
+
+    enriched = [
+        sink.emit(run_started),
+        sink.emit(node_started),
+        sink.emit(retry),
+        sink.emit(node_completed),
+        sink.emit(run_completed),
+    ]
+    sink.force_flush()
+    spans = exporter.get_finished_spans()
+
+    assert {span.name for span in spans} == {"bpg.run otel-process", "bpg.node triage"}
+    run_span = next(span for span in spans if span.name == "bpg.run otel-process")
+    node_span = next(span for span in spans if span.name == "bpg.node triage")
+    assert node_span.context.trace_id == run_span.context.trace_id
+    assert node_span.parent.span_id == run_span.context.span_id
+    assert run_span.attributes["bpg.run_id"] == "run-otel-1"
+    assert node_span.attributes["bpg.node_id"] == "triage"
+    assert node_span.attributes["bpg.provider_id"] == "agent.pipeline"
+    assert node_span.attributes["bpg.temporal.workflow_id"] == "wf-otel"
+    assert node_span.attributes["bpg.temporal.run_id"] == "temporal-run-otel"
+    assert node_span.attributes["bpg.temporal.activity_id"] == "activity-otel"
+    assert node_span.attributes["bpg.temporal.activity_type"] == "BpgNodeActivity"
+    assert node_span.attributes["bpg.temporal.attempt"] == 2
+    assert node_span.attributes["bpg.temporal.task_queue"] == "bpg-workers"
+    assert "node_retry_scheduled" in [event.name for event in node_span.events]
+    retry_event = next(event for event in node_span.events if event.name == "node_retry_scheduled")
+    assert retry_event.attributes["bpg.retry.attempt"] == 1
+    assert retry_event.attributes["bpg.retry.delay_seconds"] == 0.5
+    assert "bpg.input" not in node_span.events[0].attributes
+    assert "bpg.output" not in node_span.events[-1].attributes
+    assert all(event is not None and event.trace_id and event.span_id for event in enriched)
+
+
+def test_opentelemetry_sink_can_emit_raw_inputs_and_outputs_when_enabled():
+    exporter = _otel_exporter()
+    sink = OpenTelemetryEventSink(
+        config=TracingConfig(enabled=True, exporter="none", emit_input=True, emit_output=True),
+        span_exporter=exporter,
+    )
+    run = BpgEvent(
+        event_type="run_started",
+        run_id="run-otel-io",
+        process_name="otel-io",
+        process_version="v1",
+        process_hash="h1",
+        engine_backend="test",
+    )
+    node = BpgEvent(
+        event_type="node_completed",
+        run_id="run-otel-io",
+        process_name="otel-io",
+        process_version="v1",
+        process_hash="h1",
+        engine_backend="test",
+        node_id="summarize",
+        payload={
+            "status": "completed",
+            "input": {"body": "hello"},
+            "output": {"summary": "hello"},
+        },
+    )
+
+    sink.emit(run)
+    sink.emit(node)
+    sink.emit(run.model_copy(update={"event_type": "run_completed"}))
+    sink.force_flush()
+
+    span = next(span for span in exporter.get_finished_spans() if span.name == "bpg.node summarize")
+    event_attrs = span.events[-1].attributes
+    assert event_attrs["bpg.input"] == '{"body":"hello"}'
+    assert event_attrs["bpg.output"] == '{"summary":"hello"}'
+
+
+def test_opentelemetry_sink_emits_span_links_for_boundary_identifiers():
+    exporter = _otel_exporter()
+    sink = OpenTelemetryEventSink(
+        config=TracingConfig(enabled=True, exporter="none"),
+        span_exporter=exporter,
+    )
+    run_started = BpgEvent(
+        event_type="run_started",
+        run_id="run-otel-links",
+        process_name="otel-links",
+        process_version="v1",
+        process_hash="h1",
+        engine_backend="test",
+        temporal_workflow_id="wf-parent",
+        temporal_child_workflow_id="wf-child",
+        provider_job_id="job-42",
+    )
+    node_started = BpgEvent(
+        event_type="node_started",
+        run_id="run-otel-links",
+        process_name="otel-links",
+        process_version="v1",
+        process_hash="h1",
+        engine_backend="test",
+        node_id="worker",
+        temporal_activity_id="activity-1",
+        provider_job_id="job-42",
+        payload={"status": "running"},
+    )
+
+    sink.emit(run_started)
+    sink.emit(node_started)
+    sink.emit(node_started.model_copy(update={"event_type": "node_completed", "payload": {"status": "completed"}}))
+    sink.emit(run_started.model_copy(update={"event_type": "run_completed", "payload": {"status": "completed"}}))
+    sink.force_flush()
+
+    run_span = next(span for span in exporter.get_finished_spans() if span.name == "bpg.run otel-links")
+    node_span = next(span for span in exporter.get_finished_spans() if span.name == "bpg.node worker")
+    assert run_span.links
+    assert run_span.links[0].attributes["bpg.link.temporal_workflow_id"] == "wf-parent"
+    assert run_span.links[0].attributes["bpg.link.temporal_child_workflow_id"] == "wf-child"
+    assert run_span.links[0].attributes["bpg.link.provider_job_id"] == "job-42"
+    assert node_span.links[0].attributes["bpg.link.temporal_activity_id"] == "activity-1"
+
+
+def test_opentelemetry_sink_honors_propagated_parent_context():
+    from opentelemetry import trace
+    from opentelemetry.propagate import inject
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
+    exporter = _otel_exporter()
+    provider = TracerProvider(resource=Resource.create({"service.name": "parent"}))
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    parent_tracer = provider.get_tracer("parent")
+    carrier: dict[str, str] = {}
+    with parent_tracer.start_as_current_span("upstream"):
+        inject(carrier)
+
+    from bpg_temporal.metadata import extract_trace_context
+
+    sink = OpenTelemetryEventSink(
+        config=TracingConfig(enabled=True, exporter="none"),
+        span_exporter=exporter,
+        trace_parent_context=extract_trace_context(carrier),
+    )
+    run_started = BpgEvent(
+        event_type="run_started",
+        run_id="run-otel-propagated",
+        process_name="otel-propagated",
+        process_version="v1",
+        process_hash="h1",
+        engine_backend="test",
+    )
+    sink.emit(run_started)
+    sink.emit(run_started.model_copy(update={"event_type": "run_completed", "payload": {"status": "completed"}}))
+    sink.force_flush()
+
+    parent_span = next(span for span in exporter.get_finished_spans() if span.name == "upstream")
+    run_span = next(span for span in exporter.get_finished_spans() if span.name == "bpg.run otel-propagated")
+    assert format(run_span.context.trace_id, "032x") == format(parent_span.context.trace_id, "032x")
+
+
+def test_opentelemetry_export_failure_is_non_fatal():
+    from opentelemetry.sdk.trace.export import SpanExporter
+
+    class FailingExporter(SpanExporter):
+        def export(self, spans):  # noqa: ANN001, ARG002
+            raise RuntimeError("collector unavailable")
+
+        def shutdown(self):  # noqa: D401
+            return None
+
+    sink = OpenTelemetryEventSink(
+        config=TracingConfig(enabled=True, exporter="none"),
+        span_exporter=FailingExporter(),
+    )
+    run = BpgEvent(
+        event_type="run_started",
+        run_id="run-otel-failure",
+        process_name="otel-failure",
+        process_version="v1",
+        process_hash="h1",
+        engine_backend="test",
+    )
+
+    sink.emit(run)
+    sink.emit(run.model_copy(update={"event_type": "run_completed"}))
+
+
+def test_event_sink_group_passes_trace_ids_to_downstream_sinks():
+    exporter = _otel_exporter()
+    tracing = OpenTelemetryEventSink(
+        config=TracingConfig(enabled=True, exporter="none"),
+        span_exporter=exporter,
+    )
+    events = ListEventSink()
+    sink = EventSinkGroup([tracing, events])
+    run = BpgEvent(
+        event_type="run_started",
+        run_id="run-otel-enrich",
+        process_name="otel-enrich",
+        process_version="v1",
+        process_hash="h1",
+        engine_backend="test",
+    )
+
+    sink.emit(run)
+
+    assert events.canonical_events[0].trace_id is not None
+    assert events.canonical_events[0].span_id is not None
+
+
+# ---------------------------------------------------------------------------
+# 5. replay_run reconstructs events from execution_log
 # ---------------------------------------------------------------------------
 
 

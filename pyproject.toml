@@ -9,6 +9,11 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "langgraph>=1.0.9",
+    "opentelemetry-api>=1.42.1",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.42.1",
+    "opentelemetry-exporter-otlp-proto-http>=1.42.1",
+    "opentelemetry-sdk>=1.42.1",
+    "psycopg[binary]>=3.2.13",
     "pydantic>=2.12.5",
     "pyyaml>=6.0.3",
     "rich>=14.3.3",
@@ -38,6 +43,7 @@ dev = [
     "bpg-nodes-human",
     "bpg-nodes-search",
     "bpg-nodes-comm",
+    "bpg-nodes-audit",
     "pytest>=9.0.0",
     "pytest-cov>=7.0.0",
 ]
@@ -54,9 +60,11 @@ members = [
     "packages/bpg-nodes-human",
     "packages/bpg-nodes-search",
     "packages/bpg-nodes-comm",
+    "packages/bpg-nodes-audit",
 ]
 
 [tool.uv.sources]
+bpg = { workspace = true }
 bpg-core = { workspace = true }
 bpg-sdk = { workspace = true }
 bpg-temporal = { workspace = true }
@@ -67,8 +75,10 @@ bpg-nodes-ai = { workspace = true }
 bpg-nodes-human = { workspace = true }
 bpg-nodes-search = { workspace = true }
 bpg-nodes-comm = { workspace = true }
+bpg-nodes-audit = { workspace = true }
 
 [tool.pytest.ini_options]
 markers = [
+    "integration: tests that require local external services",
     "system_integration: tests that call real external production systems",
 ]

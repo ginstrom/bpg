@@ -27,6 +27,7 @@ from bpg.providers.base import ProviderError
 from bpg.providers.mock import MockProvider
 from bpg.runtime.langgraph_runtime import LangGraphRuntime
 from bpg.runtime.observability import ListEventSink
+from bpg.runtime.observability import ListEventSink
 
 _PROCESS_FILE = Path(__file__).resolve().parents[1] / "process.bpg.yaml"
 
@@ -783,7 +784,11 @@ policy:
     assert final_state["audit"]["retention"] == "365d"
     assert final_state["audit"]["export_to"] == "splunk.audit_sink"
     assert final_state["audit"]["tags"] == {"compliance": "sox", "env": "prod"}
-    audit_events = [e for e in sink.events if e.get("event_type") == "run_audit"]
+    audit_events = [
+        e
+        for e in sink.events
+        if e.get("event_type") == "policy_checked" and e.get("node") == "__process__"
+    ]
     assert len(audit_events) == 1
     assert audit_events[0].get("tags") == {"compliance": "sox", "env": "prod"}
 
@@ -1383,3 +1388,99 @@ policy:
     assert final_state["node_statuses"]["wait"] == NodeStatus.TIMED_OUT.value
     assert final_state["node_statuses"]["recovery"] == NodeStatus.COMPLETED.value
     assert final_state["run_status"] == NodeStatus.COMPLETED.value
+
+
+def test_lifecycle_events_emit_edge_scheduling_and_approval(ir):
+    mock = MockProvider()
+    mock.register_for_node("triage", {
+        "risk": "high",
+        "summary": "Critical",
+        "labels": ["security"],
+        "recommended_assignee": "team",
+    })
+    mock.register_for_node("approval", {"approved": True, "reason": "ok"})
+    mock.register_for_node("gitlab", {"ticket_id": "T-1", "url": "http://x"})
+
+    sink = ListEventSink()
+    runtime = LangGraphRuntime(ir=ir, providers=_make_providers(mock), event_sink=sink)
+    runtime.run(
+        {
+            "title": "Critical",
+            "severity": "S1",
+            "description": "desc",
+            "reporter_email": "e@example.com",
+        }
+    )
+
+    event_types = [event["event_type"] for event in sink.events]
+    assert "edge_fired" in event_types
+    assert "node_scheduled" in event_types
+    assert "approval_requested" in event_types
+    assert "approval_resolved" in event_types
+
+    approval_events = sink.for_node("approval")
+    assert [event["event_type"] for event in approval_events] == [
+        "edge_fired",
+        "node_scheduled",
+        "node_started",
+        "approval_requested",
+        "approval_resolved",
+        "node_completed",
+    ]
+
+
+def test_policy_blocked_event_emitted_for_access_control(tmp_path: Path):
+    ir = _compile_inline_process(
+        tmp_path,
+        """
+node_types:
+  trigger_node@v1:
+    in: object
+    out: object
+    provider: mock
+    version: v1
+    config_schema: {}
+  approval_node@v1:
+    in: object
+    out: object
+    provider: dashboard.form
+    version: v1
+    config_schema:
+      timeout: duration
+
+nodes:
+  start:
+    type: trigger_node@v1
+    config: {}
+  approval:
+    type: approval_node@v1
+    config:
+      timeout: 1h
+    on_timeout:
+      out: {}
+
+trigger: start
+edges:
+  - from: start
+    to: approval
+
+policy:
+  access_control:
+    - node: approval
+      allowed_roles: [engineering_lead]
+""",
+    )
+    mock = MockProvider()
+    mock.set_default({})
+    sink = ListEventSink()
+    runtime = LangGraphRuntime(
+        ir=ir,
+        providers={"mock": mock, "dashboard.form": mock},
+        event_sink=sink,
+    )
+    runtime.run(input_payload={})
+
+    blocked = sink.canonical_by_type("policy_blocked")
+    assert len(blocked) == 1
+    assert blocked[0].node_id == "approval"
+    assert blocked[0].payload["error_code"] == "policy_access_denied"

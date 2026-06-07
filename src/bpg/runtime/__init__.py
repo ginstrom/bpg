@@ -12,16 +12,31 @@ The runtime implements the node execution semantics defined in §7 of the spec:
 """
 
 from bpg.runtime.engine import Engine, EngineError
+from bpg.runtime.events import (
+    BpgEvent,
+    canonical_json,
+    event_from_audit_event,
+    event_from_run_event,
+    sha256_json,
+)
 from bpg.runtime.langgraph_runtime import LangGraphRuntime
 from bpg.runtime.backends import available_backends, get_backend
 from bpg.runtime.orchestrator import BpgOrchestrator, ProviderNodeExecutionAdapter
 from bpg.runtime.observability import (
+    OpenTelemetryEventSink,
     EventSink,
+    EventSinkGroup,
+    LegacyRunEventAdapter,
     ListEventSink,
     LoggingEventSink,
     NoopEventSink,
     RunEvent,
+    TracingConfig,
+    build_observability_sink,
+    build_runtime_event_sink,
+    event_to_run_event,
     replay_run,
+    run_event_to_event,
 )
 
 __all__ = [
@@ -30,12 +45,25 @@ __all__ = [
     "LangGraphRuntime",
     "BpgOrchestrator",
     "ProviderNodeExecutionAdapter",
+    "BpgEvent",
+    "canonical_json",
+    "event_from_audit_event",
+    "event_from_run_event",
+    "sha256_json",
     "available_backends",
     "get_backend",
+    "OpenTelemetryEventSink",
     "EventSink",
+    "EventSinkGroup",
+    "LegacyRunEventAdapter",
     "ListEventSink",
     "LoggingEventSink",
     "NoopEventSink",
     "RunEvent",
+    "TracingConfig",
+    "build_observability_sink",
+    "build_runtime_event_sink",
+    "event_to_run_event",
     "replay_run",
+    "run_event_to_event",
 ]

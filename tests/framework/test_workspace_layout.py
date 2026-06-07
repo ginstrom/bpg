@@ -21,6 +21,7 @@ EXPECTED_WORKSPACE_MEMBERS = [
     "packages/bpg-nodes-human",
     "packages/bpg-nodes-search",
     "packages/bpg-nodes-comm",
+    "packages/bpg-nodes-audit",
 ]
 EXPECTED_IMPORT_ROOTS = {
     "packages/bpg-core": "bpg_core",
@@ -33,6 +34,7 @@ EXPECTED_IMPORT_ROOTS = {
     "packages/bpg-nodes-human": "bpg_nodes_human",
     "packages/bpg-nodes-search": "bpg_nodes_search",
     "packages/bpg-nodes-comm": "bpg_nodes_comm",
+    "packages/bpg-nodes-audit": "bpg_nodes_audit",
 }
 
 

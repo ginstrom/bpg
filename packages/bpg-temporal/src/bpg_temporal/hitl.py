@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
+from bpg_temporal.metadata import extract_temporal_metadata
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -55,6 +57,7 @@ class ApprovalState:
     outcome: ApprovalOutcome = ApprovalOutcome.PENDING
     signal: ApprovalSignal | None = None
     created_at: str = field(default_factory=_utc_now)
+    temporal_metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def is_resolved(self) -> bool:
@@ -76,11 +79,47 @@ class ApprovalState:
             )
         self.outcome = signal.outcome
         self.signal = signal
+        self.temporal_metadata = extract_temporal_metadata(
+            workflow_id=self.request.workflow_id,
+            signal_name=f"approval.{signal.outcome.value}",
+        ).to_event_fields()
 
     def apply_timeout(self) -> None:
         if self.outcome != ApprovalOutcome.PENDING:
             return
         self.outcome = ApprovalOutcome.TIMED_OUT
+        self.temporal_metadata = extract_temporal_metadata(
+            workflow_id=self.request.workflow_id,
+            timer_id=f"approval.{self.request.request_id}.timeout",
+        ).to_event_fields()
+
+
+def approval_event_fields(
+    state: ApprovalState,
+    event_type: str,
+    *,
+    decision: str | None = None,
+) -> dict[str, Any]:
+    """Build canonical approval lifecycle event fields from gate state."""
+    payload: dict[str, Any] = {
+        "request_id": state.request.request_id,
+        "subject": state.request.subject,
+        "outcome": state.outcome.value,
+    }
+    if decision is not None:
+        payload["decision"] = decision
+    if state.signal is not None:
+        payload["reason"] = state.signal.reason
+    fields: dict[str, Any] = {
+        "event_type": event_type,
+        "node_id": state.request.node_id,
+        "correlation_id": state.request.correlation_id,
+        "actor_id": state.signal.actor.actor_id if state.signal else None,
+        "actor_type": state.signal.actor.actor_type if state.signal else None,
+        "payload": payload,
+    }
+    fields.update(state.temporal_metadata)
+    return {key: value for key, value in fields.items() if value is not None}
 
 
 class ApprovalGate:
@@ -117,4 +156,5 @@ class ApprovalGate:
             "reason": s.signal.reason if s.signal else None,
             "created_at": s.created_at,
             "resolved_at": s.signal.timestamp if s.signal else None,
+            "temporal": dict(s.temporal_metadata),
         }

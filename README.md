@@ -119,6 +119,16 @@ See [LICENSE](LICENSE), [LICENSE-APACHE](LICENSE-APACHE), and [NOTICE](NOTICE).
   - [Debug Validation Errors](docs/guides/debug_validation_errors.md)
   - [Testing Processes](docs/guides/testing_processes.md)
   - [System Integration Tests](docs/guides/system_integration_tests.md)
+- Design:
+  - [Traceability and Auditability](docs/design/traceability-and-auditability.md)
+- Marketplace:
+  - [Audit Helper Nodes](docs/marketplace/audit-helper-nodes.md)
+- Implementation Plans:
+  - [Traceability and Auditability](docs/implementation/traceability-and-auditability/index.md)
+  - [Traceability Follow-Up Plan](docs/implementation/traceability-and-auditability/follow-up.md)
+- Operations:
+  - [Audit ledger](docs/operations/audit-ledger.md)
+  - [Tracing](docs/operations/tracing.md)
 - Reference:
   - [Process Schema](docs/reference/process_schema.md)
   - [Node Schema](docs/reference/node_schema.md)
@@ -136,6 +146,8 @@ See [LICENSE](LICENSE), [LICENSE-APACHE](LICENSE-APACHE), and [NOTICE](NOTICE).
   - [run](docs/cli/run.md)
   - [status](docs/cli/status.md)
   - [replay](docs/cli/replay.md)
+  - [audit](docs/cli/audit.md)
+  - [trace](docs/cli/trace.md)
   - [up](docs/cli/up.md)
   - [down](docs/cli/down.md)
   - [logs](docs/cli/logs.md)
@@ -167,6 +179,7 @@ See [LICENSE](LICENSE), [LICENSE-APACHE](LICENSE-APACHE), and [NOTICE](NOTICE).
 - Search ingestion/retrieval graphs: [examples/search/README.md](examples/search/README.md)
 - Wrapper-focused examples: [examples/wrappers/README.md](examples/wrappers/README.md)
 - Gemini structured extraction with run artifacts: [examples/ai/gemini-imdb/README.md](examples/ai/gemini-imdb/README.md)
+- Audit compliance reporting helpers: [examples/audit/compliance-report/README.md](examples/audit/compliance-report/README.md)
 
 ## Local Development
 

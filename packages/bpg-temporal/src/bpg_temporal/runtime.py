@@ -18,6 +18,14 @@ from bpg.compiler.ir import compile_process
 from bpg.compiler.validator import validate_process
 from bpg.providers import PROVIDER_REGISTRY
 from bpg.runtime.langgraph_runtime import LangGraphRuntime
+from bpg.runtime.observability import build_runtime_event_sink
+from bpg_temporal.metadata import (
+    TemporalMetadata,
+    enrich_run_event_with_temporal_metadata,
+    extract_temporal_metadata,
+    extract_trace_context,
+    trace_context_carrier_from_payload,
+)
 
 
 class LangGraphNodeWorkflow:
@@ -154,16 +162,43 @@ class BpgWorkflow:
     process: Any
     providers: Dict[str, Any]
     cached_results: Dict[str, Dict[str, Any]]
+    temporal_metadata: TemporalMetadata
 
     def run(self, *, input_payload: Dict[str, Any], run_id: str) -> Dict[str, Any]:
         validate_process(self.process)
         ir = compile_process(self.process)
+        trace_parent_context = extract_trace_context(
+            trace_context_carrier_from_payload(input_payload)
+        )
         runtime = LangGraphRuntime(
             ir=ir,
             providers=self.providers,
             initial_result_cache=self.cached_results,
+            event_sink=build_runtime_event_sink(
+                self.process,
+                trace_parent_context=trace_parent_context,
+            ),
         )
-        return runtime.run(input_payload=input_payload, run_id=run_id)
+        result = runtime.run(input_payload=input_payload, run_id=run_id)
+        metadata = (
+            self.temporal_metadata
+            if self.temporal_metadata.workflow_id
+            else extract_temporal_metadata(
+                namespace=self.temporal_metadata.namespace or "default",
+                workflow_id=run_id,
+                run_id=self.temporal_metadata.run_id,
+                activity_id=self.temporal_metadata.activity_id,
+                activity_type=self.temporal_metadata.activity_type,
+                attempt=self.temporal_metadata.attempt,
+                task_queue=self.temporal_metadata.task_queue,
+            )
+        )
+        result["temporal"] = metadata.to_result_metadata()
+        result["execution_log"] = [
+            enrich_run_event_with_temporal_metadata(entry, metadata)
+            for entry in result.get("execution_log", [])
+        ]
+        return result
 
 
 class TemporalRuntime:
@@ -225,10 +260,13 @@ class TemporalRuntime:
                 f"{details}"
             ) from first_error
 
+        temporal_metadata = extract_temporal_metadata()
+
         return BpgWorkflow(
             process=process,
             providers=providers,
             cached_results=cached_results or {},
+            temporal_metadata=temporal_metadata,
         )
 
     def run_workflow(
@@ -244,13 +282,5 @@ class TemporalRuntime:
             cached_results=cached_results,
         )
         result = workflow.run(input_payload=input_payload, run_id=run_id)
-        # Stub: real Temporal metadata (workflow ID, namespace) will be populated
-        # when the actual Temporal client is wired up in step 4.
-        result.setdefault(
-            "temporal",
-            {
-                "workflow": "BpgWorkflow",
-                "namespace": "default",
-            },
-        )
+        result.setdefault("temporal", workflow.temporal_metadata.to_result_metadata())
         return result
