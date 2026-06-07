@@ -125,6 +125,7 @@ See [LICENSE](LICENSE), [LICENSE-APACHE](LICENSE-APACHE), and [NOTICE](NOTICE).
   - [Audit Helper Nodes](docs/marketplace/audit-helper-nodes.md)
 - Implementation Plans:
   - [Traceability and Auditability](docs/implementation/traceability-and-auditability/index.md)
+  - [Traceability Follow-Up Plan](docs/implementation/traceability-and-auditability/follow-up.md)
 - Reference:
   - [Process Schema](docs/reference/process_schema.md)
   - [Node Schema](docs/reference/node_schema.md)

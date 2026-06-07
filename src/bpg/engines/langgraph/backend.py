@@ -6,6 +6,7 @@ from bpg.compiler.ir import compile_process
 from bpg.compiler.validator import validate_process
 from bpg.providers import PROVIDER_REGISTRY
 from bpg.runtime.langgraph_runtime import LangGraphRuntime
+from bpg.runtime.observability import build_runtime_event_sink
 
 
 class LangGraphExecutionBackend:
@@ -37,5 +38,6 @@ class LangGraphExecutionBackend:
             ir=ir,
             providers=providers,
             initial_result_cache=cached_results,
+            event_sink=build_runtime_event_sink(process),
         )
         return runtime.run(input_payload=input_payload, run_id=run_id)

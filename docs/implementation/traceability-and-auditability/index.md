@@ -15,6 +15,12 @@ The work should be delivered in order. Each step is self-contained enough to han
 - [x] [8. CLI Inspection and Verification](08-cli-inspection-and-verification/index.md)
 - [x] [9. Marketplace Helper Nodes](09-marketplace-helper-nodes/index.md)
 
+## Follow-Up Work
+
+The original nine steps delivered the core libraries, schemas, CLI, and marketplace nodes. Production integration and operator ergonomics are tracked separately:
+
+- [Follow-Up Plan](follow-up.md)
+
 ## Delivery Principles
 - Runtime capture is mandatory for core tracing and audit events.
 - Marketplace nodes are optional reporting and export helpers, not primary capture.

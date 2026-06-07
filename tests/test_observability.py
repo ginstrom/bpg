@@ -26,6 +26,8 @@ from bpg.runtime.langgraph_runtime import (
     _compute_retry_delay,
 )
 from bpg.runtime.events import BpgEvent
+from bpg.audit.postgres import PostgresAuditEventSink
+from bpg.compiler.parser import parse_process_file
 from bpg.runtime.observability import (
     EventSinkGroup,
     ListEventSink,
@@ -33,6 +35,7 @@ from bpg.runtime.observability import (
     OpenTelemetryEventSink,
     TracingConfig,
     build_observability_sink,
+    build_runtime_event_sink,
     replay_run,
 )
 
@@ -234,6 +237,50 @@ def _otel_exporter():
 
 def test_tracing_is_disabled_by_default():
     sink = build_observability_sink(None)
+
+    assert isinstance(sink, NoopEventSink)
+
+
+def test_build_runtime_event_sink_without_observability(ir):
+    sink = build_runtime_event_sink(ir.process)
+
+    assert isinstance(sink, NoopEventSink)
+
+
+def test_build_runtime_event_sink_registers_audit_sink():
+    fixtures = Path(__file__).resolve().parent / "fixtures" / "audit_policy"
+    process = parse_process_file(fixtures / "enabled.bpg.yaml")
+
+    sink = build_runtime_event_sink(
+        process.model_copy(
+            update={
+                "observability": process.observability.model_copy(
+                    update={"audit": process.observability.audit.model_copy(update={"dsn": "postgresql://example"})}
+                )
+            }
+        )
+    )
+
+    assert isinstance(sink, PostgresAuditEventSink)
+
+
+def test_build_runtime_event_sink_returns_noop_when_audit_disabled():
+    fixtures = Path(__file__).resolve().parent / "fixtures" / "audit_policy"
+    process = parse_process_file(fixtures / "enabled.bpg.yaml")
+
+    sink = build_runtime_event_sink(
+        process.model_copy(
+            update={
+                "observability": process.observability.model_copy(
+                    update={
+                        "audit": process.observability.audit.model_copy(
+                            update={"enabled": False, "dsn": "postgresql://example"}
+                        )
+                    }
+                )
+            }
+        )
+    )
 
     assert isinstance(sink, NoopEventSink)
 

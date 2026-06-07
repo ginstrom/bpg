@@ -18,6 +18,7 @@ from bpg.compiler.ir import compile_process
 from bpg.compiler.validator import validate_process
 from bpg.providers import PROVIDER_REGISTRY
 from bpg.runtime.langgraph_runtime import LangGraphRuntime
+from bpg.runtime.observability import build_runtime_event_sink
 from bpg_temporal.metadata import (
     TemporalMetadata,
     enrich_run_event_with_temporal_metadata,
@@ -168,6 +169,7 @@ class BpgWorkflow:
             ir=ir,
             providers=self.providers,
             initial_result_cache=self.cached_results,
+            event_sink=build_runtime_event_sink(self.process),
         )
         result = runtime.run(input_payload=input_payload, run_id=run_id)
         metadata = (

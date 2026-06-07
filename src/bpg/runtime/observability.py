@@ -41,7 +41,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Iterable, List, Literal, Optional
+from typing import Any, Dict, Iterable, List, Literal, Mapping, Optional
 
 from typing_extensions import TypedDict
 
@@ -558,6 +558,36 @@ class OpenTelemetryEventSink(EventSink):
                 self._provider.shutdown()
         except Exception:  # noqa: BLE001
             pass
+
+
+def _observability_config_from_process(process: Any) -> Dict[str, Any] | None:
+    """Extract observability sink configuration from a process definition."""
+    observability = getattr(process, "observability", None)
+    if observability is None:
+        return None
+    if hasattr(observability, "model_dump"):
+        dumped = observability.model_dump(mode="json", exclude_none=True)
+        if not dumped:
+            return None
+        return {"observability": dumped}
+    if isinstance(observability, Mapping):
+        if not observability:
+            return None
+        return {"observability": dict(observability)}
+    return None
+
+
+def build_runtime_event_sink(process: Any) -> EventSink:
+    """Build the runtime observability sink from a process definition.
+
+    Reads ``process.observability`` when present and delegates to
+    :func:`build_observability_sink`. Returns :class:`NoopEventSink` when
+    observability is unset or fully disabled.
+    """
+    config = _observability_config_from_process(process)
+    if config is None:
+        return NoopEventSink()
+    return build_observability_sink(config)
 
 
 def build_observability_sink(
