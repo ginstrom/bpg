@@ -96,16 +96,25 @@ At the same time, BPG is **flexible about integrations**. It intentionally avoid
 
 1. **Workflow Runtime:** Responsible for graph execution, scheduling, and durable state persistence. BPG uses Temporal for reliable, long-running execution.
 2. **Node System:** Nodes are typed, observable units of work with explicit inputs and outputs.
-3. **Observability Layer:** A first-class concern. All workflows and nodes automatically emit traces, metrics, and audit events.
+3. **Observability Layer:** A first-class concern. Workflows and nodes emit canonical
+   events that project to OpenTelemetry traces and a Postgres audit ledger when
+   `observability` is enabled on a process.
 4. **Human-in-the-loop (HITL):** Human intervention is a first-class orchestration primitive, not an afterthought.
 
 ## Node Philosophy
 
-BPG distinguishes between **Core Nodes** (universal fundamental operations like branch, transform, log) and **Extension Packages** (vendor-specific or domain-specific functionality like `bpg-nodes-llm` or `bpg-nodes-weaviate`).
+BPG distinguishes between **Core Nodes** (universal fundamental operations like branch,
+transform, log) and **Extension Packages** (vendor-specific or domain-specific
+functionality). First-party extension packages (`bpg-nodes-ai`, `bpg-nodes-search`, and
+others) are published in the
+[bpg-marketplace](https://github.com/ginstrom/bpg-marketplace) registry.
 
-This separation avoids dependency bloat and vendor lock-in while keeping the core framework stable.
+This separation avoids dependency bloat and vendor lock-in while keeping the core
+framework stable.
 
 ## Related pages
 - [Quickstart](quickstart.md)
 - [Process Concept](concepts/process.md)
+- [Traceability and Auditability](design/traceability-and-auditability.md)
+- [Marketplace](marketplace/index.md)
 - [How Agents Should Use BPG](ai/how_agents_should_use_bpg.md)

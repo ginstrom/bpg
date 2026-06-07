@@ -122,6 +122,7 @@ See [LICENSE](LICENSE), [LICENSE-APACHE](LICENSE-APACHE), and [NOTICE](NOTICE).
 - Design:
   - [Traceability and Auditability](docs/design/traceability-and-auditability.md)
 - Marketplace:
+  - [Overview](docs/marketplace/index.md) — [bpg-marketplace](https://github.com/ginstrom/bpg-marketplace) registry
   - [Audit Helper Nodes](docs/marketplace/audit-helper-nodes.md)
 - Implementation Plans:
   - [Traceability and Auditability](docs/implementation/traceability-and-auditability/index.md)
@@ -148,6 +149,7 @@ See [LICENSE](LICENSE), [LICENSE-APACHE](LICENSE-APACHE), and [NOTICE](NOTICE).
   - [replay](docs/cli/replay.md)
   - [audit](docs/cli/audit.md)
   - [trace](docs/cli/trace.md)
+  - [marketplace](docs/cli/marketplace.md)
   - [up](docs/cli/up.md)
   - [down](docs/cli/down.md)
   - [logs](docs/cli/logs.md)

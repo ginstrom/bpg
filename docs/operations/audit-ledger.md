@@ -11,8 +11,8 @@ doc_metadata:
 
 BPG writes tamper-evident audit records during `bpg run` when a process enables
 `observability.audit`. Runtime capture is mandatory for compliance evidence. The
-`bpg-nodes-audit` marketplace package provides optional post-run reporting helpers and does
-not replace runtime capture.
+[`bpg-nodes-audit`](https://github.com/ginstrom/bpg-marketplace) marketplace package
+provides optional post-run reporting helpers and does not replace runtime capture.
 
 Legacy `policy.audit` retention and export tags describe run-log retention policy. Durable
 evidence lives under `observability.audit` and the Postgres ledger.
@@ -133,6 +133,9 @@ after a checkpoint fail verification.
 
 ## Runtime vs marketplace
 
+Mandatory audit capture runs in the framework runtime. Optional reporting nodes are
+published in the [bpg-marketplace](https://github.com/ginstrom/bpg-marketplace) registry.
+
 | Concern | Runtime capture | Marketplace helpers |
 | --- | --- | --- |
 | When | During `bpg run` | Post-run workflows |
@@ -164,8 +167,19 @@ after a checkpoint fail verification.
 - Marketplace node failures do not retroactively create audit evidence.
 - Fix helper configuration for reporting; rely on runtime capture for durable records.
 
+## Local development
+
+For local Postgres and tracing services, use the Kind cluster config at
+`k8s/kind-config.yaml`. It exposes host ports for Postgres (5432), OTLP gRPC/HTTP
+(4317/4318), and Jaeger UI (16686):
+
+```bash
+kind create cluster --config k8s/kind-config.yaml
+```
+
 ## Related pages
 
+- [Marketplace overview](../marketplace/index.md)
 - [CLI: bpg audit](../cli/audit.md)
 - [CLI: bpg trace](../cli/trace.md)
 - [Process schema: observability](../reference/process_schema.md)
