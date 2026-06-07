@@ -345,7 +345,11 @@ child_workflow_id
 BPG should propagate trace context through Temporal workflow/activity boundaries where supported. Temporal workflow history remains useful corroborating evidence, but BPG audit records remain the compliance ledger.
 
 ## Marketplace Nodes
-Marketplace nodes can compose audit-aware workflows, but must not be required for mandatory capture.
+
+Optional helper nodes are published in the
+[bpg-marketplace](https://github.com/ginstrom/bpg-marketplace) registry (see
+[Audit Helper Nodes](../marketplace/audit-helper-nodes.md)). Marketplace nodes can
+compose audit-aware workflows, but must not be required for mandatory capture.
 
 Appropriate marketplace nodes:
 

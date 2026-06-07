@@ -8,8 +8,8 @@ follow different compatibility guarantees:
 - **Framework packages** (`bpg-core`, `bpg-sdk`, `bpg-temporal`, `bpg-langgraph`, `bpg-cli`)
   form the stable authoring and runtime API surface.
 - **First-party node packages** (`bpg-nodes-core`, `bpg-nodes-ai`, `bpg-nodes-human`,
-  `bpg-nodes-search`, `bpg-nodes-comm`) are installable node distributions that
-  implement the SDK authoring contract.
+  `bpg-nodes-search`, `bpg-nodes-comm`, `bpg-nodes-audit`) are installable node
+  distributions that implement the SDK authoring contract.
 
 ## Version Alignment
 
@@ -62,8 +62,18 @@ The PyPI version and the `@vN` suffix evolve independently:
 
 ## Node Package Lifecycle
 
-Node packages are registered in `bpg-marketplace` after publishing. The
-marketplace sync command (`bpg marketplace sync`) is used to update the registry.
+Node packages are registered in the
+[bpg-marketplace](https://github.com/ginstrom/bpg-marketplace) repository after
+publishing. Use the marketplace CLI to export, validate, and sync registry entries:
+
+```bash
+uv run bpg marketplace export --output-dir marketplace-artifacts
+uv run bpg marketplace validate marketplace-artifacts
+uv run bpg marketplace sync --marketplace-dir ../bpg-marketplace
+```
+
+See [Marketplace overview](../marketplace/index.md) and [CLI: marketplace](../cli/marketplace.md)
+for the full publishing workflow.
 
 Framework packages and node packages are versioned together at `0.1.0` but may
 diverge in patch and minor releases as they mature independently.

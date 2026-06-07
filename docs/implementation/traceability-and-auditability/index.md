@@ -17,9 +17,12 @@ The work should be delivered in order. Each step is self-contained enough to han
 
 ## Follow-Up Work
 
-The original nine steps delivered the core libraries, schemas, CLI, and marketplace nodes. Production integration and operator ergonomics are tracked separately:
+The original nine steps delivered the core libraries, schemas, CLI, and marketplace nodes.
+Follow-up workstreams (10–17) for production integration and operator ergonomics are
+complete. See the [Follow-Up Plan](follow-up.md) for details.
 
-- [Follow-Up Plan](follow-up.md)
+Marketplace helper nodes are published in
+[bpg-marketplace](https://github.com/ginstrom/bpg-marketplace).
 
 ## Delivery Principles
 - Runtime capture is mandatory for core tracing and audit events.

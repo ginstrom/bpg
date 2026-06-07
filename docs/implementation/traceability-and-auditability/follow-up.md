@@ -6,13 +6,16 @@ Steps 1–9 delivered the canonical event model, sink abstractions, Postgres led
 
 ## Background
 
-A completeness review against the design and implementation checklist found:
+The original nine implementation steps delivered core libraries, schemas, CLI commands,
+and marketplace helper nodes. The follow-up workstreams (10–17) closed the remaining gaps
+identified during a completeness review:
 
-- Core libraries, schemas, tests, CLI commands, and marketplace nodes are in place.
-- `LangGraphRuntime` emits canonical events, but production backends (`LangGraphExecutionBackend`, `TemporalRuntime`) do not pass a configured observability sink. They default to `NoopEventSink`, so Postgres audit and OpenTelemetry export are not active during normal `bpg run` execution.
-- Temporal correlation fields and payload hashes exist on `BpgEvent`, but are not consistently projected into durable audit rows.
-- Several canonical event types are defined but not emitted by runtime paths.
-- Workspace hygiene tests fail because `bpg-nodes-audit` is not yet registered in framework layout expectations.
+- Runtime backends now wire configured observability sinks during `bpg run`.
+- Temporal correlation fields and payload hashes are projected into durable audit rows.
+- Runtime paths emit the full canonical event type set.
+- `bpg-nodes-audit` is registered in workspace layout expectations and synced to
+  [bpg-marketplace](https://github.com/ginstrom/bpg-marketplace).
+- Operator runbooks cover Postgres roles, tracing, and the runtime vs marketplace split.
 
 ## Delivery Principles
 
@@ -117,6 +120,7 @@ uv run bpg audit export <run-id> --output /tmp/bpg-audit-bundle.json
 
 - [Traceability and Auditability Design](../../design/traceability-and-auditability.md)
 - [Original Implementation Plan](index.md)
+- [Marketplace overview](../../marketplace/index.md)
 - [Audit CLI](../../cli/audit.md)
 - [Trace CLI](../../cli/trace.md)
 - [Audit Helper Nodes](../../marketplace/audit-helper-nodes.md)

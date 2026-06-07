@@ -9,7 +9,11 @@ doc_metadata:
 
 ## Summary
 
-The `bpg-nodes-audit` package provides optional helper nodes for post-run compliance workflows. They read from the runtime Postgres audit ledger and must not be used as the primary audit capture mechanism.
+The `bpg-nodes-audit` package provides optional helper nodes for post-run compliance
+workflows. It is published in the
+[bpg-marketplace](https://github.com/ginstrom/bpg-marketplace) registry as
+`bpg.nodes.audit@v1`. The nodes read from the runtime Postgres audit ledger and must
+not be used as the primary audit capture mechanism.
 
 Runtime capture remains mandatory and independent of these nodes.
 
@@ -63,6 +67,7 @@ Pass `dry_run: true` in node inputs to validate routing without external side ef
 
 ## Related Pages
 
+- [Marketplace overview](index.md)
 - [Audit ledger operations](../operations/audit-ledger.md)
 - [CLI: audit](../cli/audit.md)
 - [CLI: trace](../cli/trace.md)

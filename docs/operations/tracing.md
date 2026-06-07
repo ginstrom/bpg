@@ -39,6 +39,13 @@ Defaults:
 Point BPG at a local or managed OTLP endpoint. For a local collector, see the
 [OpenTelemetry Collector documentation](https://opentelemetry.io/docs/collector/).
 
+For local development with Kind, `k8s/kind-config.yaml` exposes OTLP ports 4317/4318 and
+Jaeger UI on port 16686:
+
+```bash
+kind create cluster --config k8s/kind-config.yaml
+```
+
 Example environment override:
 
 ```bash

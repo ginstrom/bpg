@@ -1,8 +1,12 @@
 # bpg-nodes-audit
 
-Optional marketplace helper nodes for audit export, verification, compliance reporting, and evidence routing.
+Optional marketplace helper nodes for audit export, verification, compliance reporting,
+and evidence routing. Published in the
+[bpg-marketplace](https://github.com/ginstrom/bpg-marketplace) registry as
+`bpg.nodes.audit@v1`.
 
-These nodes read from the runtime Postgres audit ledger. They do not replace mandatory runtime audit capture.
+These nodes read from the runtime Postgres audit ledger. They do not replace mandatory
+runtime audit capture. See [Audit Helper Nodes](../../docs/marketplace/audit-helper-nodes.md).
 
 ## Nodes
 

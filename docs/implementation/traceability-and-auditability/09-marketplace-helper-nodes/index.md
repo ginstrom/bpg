@@ -9,8 +9,9 @@ Marketplace nodes are useful for export, notification, case creation, and verifi
 ## Primary Touchpoints
 - `packages/bpg-sdk/src/bpg_sdk/marketplace.py`
 - `packages/bpg-sdk/src/bpg_sdk/manifest.py`
-- Marketplace package or examples directories.
-- Docs for marketplace node usage.
+- `packages/bpg-nodes-audit` — synced to [bpg-marketplace](https://github.com/ginstrom/bpg-marketplace)
+- `docs/marketplace/audit-helper-nodes.md`
+- `examples/audit/compliance-report/`
 - Tests for node manifests and behavior.
 
 ## Scope
