@@ -45,11 +45,56 @@ Keep one canonical YAML shape. Avoid equivalent alternate representations.
         "additionalProperties": false
       }
     },
+    "observability": {
+      "type": "object",
+      "properties": {
+        "tracing": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "exporter": {"type": "string", "enum": ["otlp", "none"]},
+            "endpoint": {"type": "string"},
+            "protocol": {"type": "string", "enum": ["grpc", "http", "http/protobuf", "protobuf"]},
+            "sample": {"type": "string", "enum": ["always", "never"]},
+            "emit_input": {"type": "boolean"},
+            "emit_output": {"type": "boolean"},
+            "service_name": {"type": "string"}
+          },
+          "additionalProperties": false
+        },
+        "audit": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "sink": {"type": "string", "enum": ["postgres"]},
+            "dsn": {"type": "string"},
+            "dsn_env": {"type": "string"},
+            "failure_policy": {"type": "string", "enum": ["fail_run", "warn", "disabled"]},
+            "retention": {"type": "string"},
+            "payload_retention": {"type": "string", "enum": ["hash_only", "redacted", "full"]},
+            "redaction_policy_id": {"type": "string"},
+            "redacted_field_paths": {"type": "array", "items": {"type": "string"}},
+            "duplicate_strategy": {"type": "string", "enum": ["reject", "ignore"]},
+            "tags": {"type": "object", "additionalProperties": {"type": "string"}}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "policy": {"type": "object"}
   },
   "additionalProperties": false
 }
 ```
+
+## Observability Semantics
+- `observability.tracing` configures best-effort OpenTelemetry export. Raw input/output attributes remain disabled unless `emit_input` or `emit_output` is explicitly true.
+- `observability.audit.enabled: true` configures durable audit capture when paired with a supported sink and a `dsn` or populated `dsn_env`.
+- `failure_policy: fail_run` propagates audit sink failures to runtime execution; `warn` logs the failure and continues; `disabled` prevents durable audit sink registration.
+- `payload_retention: redacted` is the default for enabled audit capture. `hash_only` stores only audit metadata and the original payload hash. `full` stores the original payload and must be explicitly configured.
+- `redacted_field_paths` are dot paths within the event payload. Common sensitive keys such as `password`, `secret`, `token`, and `api_key` are redacted by the default policy.
+- Audit `tags`, `redaction_policy_id`, and redacted field paths are copied onto canonical events before durable audit storage.
 
 ## Artifact semantics
 - Artifacts are materialized at run completion.

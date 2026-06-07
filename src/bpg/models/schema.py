@@ -185,6 +185,42 @@ class ObservabilityPolicyV2(_ImmutableModel):
     emit_output: bool = Field(default=True)
 
 
+class RuntimeTracingPolicy(_ImmutableModel):
+    """Process-level tracing export policy."""
+
+    enabled: bool = Field(default=False)
+    exporter: Literal["otlp", "none"] = Field(default="otlp")
+    endpoint: Optional[str] = Field(default=None)
+    protocol: Literal["grpc", "http", "http/protobuf", "protobuf"] = Field(default="grpc")
+    sample: Literal["always", "never"] = Field(default="always")
+    emit_input: bool = Field(default=False)
+    emit_output: bool = Field(default=False)
+    service_name: str = Field(default="bpg")
+
+
+class RuntimeAuditPolicy(_ImmutableModel):
+    """Process-level durable audit capture policy."""
+
+    enabled: bool = Field(default=False)
+    sink: Literal["postgres"] = Field(default="postgres")
+    dsn: Optional[str] = Field(default=None)
+    dsn_env: Optional[str] = Field(default=None)
+    failure_policy: Literal["fail_run", "warn", "disabled"] = Field(default="warn")
+    retention: Optional[str] = Field(default=None)
+    payload_retention: Literal["hash_only", "redacted", "full"] = Field(default="redacted")
+    redaction_policy_id: str = Field(default="default")
+    redacted_field_paths: List[str] = Field(default_factory=list)
+    duplicate_strategy: Literal["reject", "ignore"] = Field(default="reject")
+    tags: Dict[str, str] = Field(default_factory=dict)
+
+
+class RuntimeObservabilityPolicy(_ImmutableModel):
+    """Process-level observability sink configuration."""
+
+    tracing: Optional[RuntimeTracingPolicy] = Field(default=None)
+    audit: Optional[RuntimeAuditPolicy] = Field(default=None)
+
+
 class ProcessNodeSpecV2(_ImmutableModel):
     """A process node referenced through a package export."""
 
@@ -517,4 +553,5 @@ class Process(_ImmutableModel):
         default_factory=list,
         description="Optional declared output artifacts materialized at run completion.",
     )
+    observability: Optional[RuntimeObservabilityPolicy] = Field(default=None)
     policy: Optional[Policy] = Field(default=None)

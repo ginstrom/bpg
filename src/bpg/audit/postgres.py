@@ -5,11 +5,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 import logging
-from typing import Any, Iterable, Literal, Mapping
+from typing import Any, Iterable, Mapping
 
+from bpg.audit.policy import (
+    AuditFailurePolicy,
+    AuditPayloadRetention,
+    AuditPolicyConfig,
+    AuditSinkFailure,
+    DuplicateStrategy,
+    apply_audit_policy,
+    audit_payload_for_event,
+)
 from bpg.runtime.events import BpgEvent, canonical_json, sha256_json
-
-DuplicateStrategy = Literal["reject", "ignore"]
 
 AUDIT_SCHEMA_SQL = """
 create table if not exists audit_events (
@@ -75,36 +82,25 @@ class DuplicateAuditEventError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class PostgresAuditConfig:
+class PostgresAuditConfig(AuditPolicyConfig):
     """Configuration for the Postgres audit sink."""
-
-    enabled: bool = False
-    dsn: str | None = None
-    duplicate_strategy: DuplicateStrategy = "reject"
 
     @classmethod
     def from_mapping(cls, config: Mapping[str, Any] | None) -> "PostgresAuditConfig":
         """Build audit config from a root, observability, or audit-only mapping."""
-        if not config:
-            return cls()
-
-        raw: Mapping[str, Any]
-        if "observability" in config:
-            raw = (config.get("observability") or {}).get("audit") or {}
-        elif "audit" in config:
-            raw = config.get("audit") or {}
-        else:
-            raw = config
-
-        sink = str(raw.get("sink", "postgres")).lower()
-        duplicate_strategy = str(raw.get("duplicate_strategy", "reject")).lower()
-        if duplicate_strategy != "ignore":
-            duplicate_strategy = "reject"
-
+        policy = AuditPolicyConfig.from_mapping(config)
         return cls(
-            enabled=bool(raw.get("enabled", False)) and sink == "postgres",
-            dsn=raw.get("dsn"),
-            duplicate_strategy=duplicate_strategy,  # type: ignore[arg-type]
+            enabled=policy.enabled,
+            sink=policy.sink,
+            dsn=policy.dsn,
+            dsn_env=policy.dsn_env,
+            failure_policy=policy.failure_policy,
+            retention=policy.retention,
+            payload_retention=policy.payload_retention,
+            redaction_policy_id=policy.redaction_policy_id,
+            redacted_field_paths=policy.redacted_field_paths,
+            duplicate_strategy=policy.duplicate_strategy,
+            tags=policy.tags,
         )
 
 
@@ -184,8 +180,10 @@ def is_audit_worthy_event(event: BpgEvent) -> bool:  # noqa: ARG001
     return True
 
 
-def _payload_for_audit(event: BpgEvent) -> dict[str, Any]:
-    return dict(event.payload or {})
+def _payload_for_audit(event: BpgEvent, audit_config: AuditPolicyConfig | None) -> dict[str, Any]:
+    if audit_config is None:
+        return dict(event.payload or {})
+    return audit_payload_for_event(event, audit_config)
 
 
 def _timestamp_for_hash(value: str) -> str:
@@ -231,9 +229,11 @@ def build_audit_record(
     previous_hash: str | None,
     chain_scope: str = "run",
     chain_id: str | None = None,
+    audit_config: AuditPolicyConfig | None = None,
 ) -> AuditRecord:
     """Project a canonical BPG event into an audit ledger row."""
-    payload = _payload_for_audit(event)
+    event = apply_audit_policy(event, audit_config) if audit_config is not None else event
+    payload = _payload_for_audit(event, audit_config)
     payload_sha256 = sha256_json(payload)
     row: dict[str, Any] = {
         "sequence_id": sequence_id,
@@ -345,10 +345,26 @@ class PostgresAuditEventSink:
         *,
         dsn: str,
         duplicate_strategy: DuplicateStrategy = "reject",
+        failure_policy: AuditFailurePolicy = "warn",
+        retention: str | None = None,
+        payload_retention: AuditPayloadRetention = "redacted",
+        redaction_policy_id: str = "default",
+        redacted_field_paths: Iterable[str] = (),
+        tags: Mapping[str, str] | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self._dsn = dsn
-        self._duplicate_strategy = duplicate_strategy
+        self._audit_config = AuditPolicyConfig(
+            enabled=True,
+            dsn=dsn,
+            failure_policy=failure_policy,
+            retention=retention,
+            payload_retention=payload_retention,
+            redaction_policy_id=redaction_policy_id,
+            redacted_field_paths=tuple(redacted_field_paths),
+            duplicate_strategy=duplicate_strategy,
+            tags=dict(tags or {}),
+        )
         self._logger = logger or logging.getLogger("bpg.audit")
 
     @classmethod
@@ -362,17 +378,30 @@ class PostgresAuditEventSink:
         if not audit_config.enabled:
             return None
         if not audit_config.dsn:
-            raise ValueError("Postgres audit sink requires a dsn")
-        return cls(dsn=audit_config.dsn, duplicate_strategy=audit_config.duplicate_strategy)
+            dsn_hint = f" or populated dsn_env={audit_config.dsn_env}" if audit_config.dsn_env else ""
+            raise ValueError(f"Postgres audit sink requires a dsn{dsn_hint}")
+        return cls(
+            dsn=audit_config.dsn,
+            duplicate_strategy=audit_config.duplicate_strategy,
+            failure_policy=audit_config.failure_policy,
+            retention=audit_config.retention,
+            payload_retention=audit_config.payload_retention,
+            redaction_policy_id=audit_config.redaction_policy_id,
+            redacted_field_paths=audit_config.redacted_field_paths,
+            tags=audit_config.tags,
+        )
 
-    def emit(self, event: BpgEvent) -> None:
+    def emit(self, event: BpgEvent) -> BpgEvent | None:
         if not is_audit_worthy_event(event):
             return None
+        audited_event = apply_audit_policy(event, self._audit_config)
         try:
-            self.insert_event(event)
+            self.insert_event(audited_event)
         except Exception as exc:  # noqa: BLE001
+            if self._audit_config.failure_policy == "fail_run":
+                raise AuditSinkFailure(f"Postgres audit event insert failed: {exc}") from exc
             self._logger.warning("Postgres audit event insert failed: %s", exc)
-        return None
+        return audited_event
 
     def setup_schema(self) -> None:
         """Create the audit ledger schema and immutability controls."""
@@ -420,6 +449,7 @@ class PostgresAuditEventSink:
                         previous_hash=previous_hash["event_hash"] if previous_hash else None,
                         chain_scope=chain_scope,
                         chain_id=chain_id,
+                        audit_config=self._audit_config,
                     )
                     row = record.to_insert_row()
                     conn.execute(
@@ -443,7 +473,7 @@ class PostgresAuditEventSink:
                     return record
             except UniqueViolation as exc:
                 conn.rollback()
-                if self._duplicate_strategy == "ignore":
+                if self._audit_config.duplicate_strategy == "ignore":
                     return None
                 raise DuplicateAuditEventError(f"duplicate audit event_id: {event.event_id}") from exc
 

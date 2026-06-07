@@ -1,0 +1,32 @@
+metadata:
+  name: audit-policy-invalid
+  version: 1.0.0
+
+types:
+  In:
+    text: string
+  Out:
+    ok: bool
+
+node_types:
+  worker@v1:
+    in: In
+    out: Out
+    provider: mock
+    version: v1
+    config_schema: {}
+
+nodes:
+  start:
+    type: worker@v1
+    config: {}
+
+trigger: start
+edges: []
+
+observability:
+  audit:
+    enabled: true
+    sink: postgres
+    failure_policy: panic
+    payload_retention: raw

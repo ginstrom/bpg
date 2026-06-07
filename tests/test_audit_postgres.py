@@ -19,11 +19,15 @@ import pytest
 
 from bpg.audit import (
     AUDIT_SCHEMA_SQL,
+    AuditPolicyConfig,
+    AuditSinkFailure,
     DuplicateAuditEventError,
     PostgresAuditConfig,
     PostgresAuditEventSink,
+    audit_payload_for_event,
     build_audit_record,
     compute_audit_event_hash,
+    redact_payload,
     verify_audit_chain,
 )
 from bpg.runtime.events import BpgEvent, sha256_json
@@ -153,6 +157,168 @@ def test_postgres_audit_config_parses_root_and_observability_shapes():
     assert root.enabled is True
     assert root.dsn == "postgresql://example"
     assert nested.duplicate_strategy == "ignore"
+
+
+def test_postgres_audit_config_reads_dsn_env(monkeypatch):
+    monkeypatch.setenv("BPG_AUDIT_DATABASE_URL", "postgresql://from-env")
+
+    config = PostgresAuditConfig.from_mapping(
+        {
+            "audit": {
+                "enabled": True,
+                "sink": "postgres",
+                "dsn_env": "BPG_AUDIT_DATABASE_URL",
+            }
+        }
+    )
+
+    assert config.dsn == "postgresql://from-env"
+
+
+def test_postgres_audit_config_rejects_invalid_policy_values():
+    with pytest.raises(ValueError, match="audit.failure_policy"):
+        PostgresAuditConfig.from_mapping({"audit": {"enabled": True, "failure_policy": "panic"}})
+
+    with pytest.raises(ValueError, match="audit.payload_retention"):
+        PostgresAuditConfig.from_mapping({"audit": {"enabled": True, "payload_retention": "rawish"}})
+
+
+def test_audit_failure_policy_disabled_does_not_register_sink():
+    sink = build_observability_sink(
+        {
+            "audit": {
+                "enabled": True,
+                "sink": "postgres",
+                "dsn": "postgresql://example",
+                "failure_policy": "disabled",
+            }
+        }
+    )
+
+    assert isinstance(sink, NoopEventSink)
+
+
+def test_redacted_payload_retention_redacts_configured_and_sensitive_fields():
+    event = _event()
+    event = event.model_copy(
+        update={
+            "payload": {
+                "status": "running",
+                "secret": "s1",
+                "profile": {"email": "ryan@example.com", "token": "t1"},
+            }
+        }
+    )
+    policy = AuditPolicyConfig(
+        enabled=True,
+        dsn="postgresql://example",
+        payload_retention="redacted",
+        redaction_policy_id="custom",
+        redacted_field_paths=("profile.email",),
+        tags={"environment": "test"},
+    )
+
+    payload = audit_payload_for_event(event, policy)
+
+    assert payload["_audit"]["payload_retention"] == "redacted"
+    assert payload["_audit"]["redaction_policy_id"] == "custom"
+    assert payload["_audit"]["tags"] == {"environment": "test"}
+    assert payload["event_payload"]["secret"] == "[REDACTED]"
+    assert payload["event_payload"]["profile"]["email"] == "[REDACTED]"
+    assert payload["event_payload"]["profile"]["token"] == "[REDACTED]"
+    assert "$.profile.email" in payload["_audit"]["redacted_field_paths"]
+    assert "$.secret" in payload["_audit"]["redacted_field_paths"]
+
+
+def test_hash_only_payload_retention_stores_no_event_payload():
+    event = _event()
+    policy = AuditPolicyConfig(
+        enabled=True,
+        dsn="postgresql://example",
+        payload_retention="hash_only",
+    )
+
+    payload = audit_payload_for_event(event, policy)
+
+    assert payload == {
+        "_audit": {
+            "payload_retention": "hash_only",
+            "payload_sha256": sha256_json(event.payload),
+            "redaction_policy_id": "default",
+            "redacted_field_paths": [],
+            "tags": {},
+        }
+    }
+
+
+def test_full_payload_retention_requires_explicit_policy():
+    event = _event()
+    default_policy = AuditPolicyConfig(enabled=True, dsn="postgresql://example")
+    full_policy = AuditPolicyConfig(
+        enabled=True,
+        dsn="postgresql://example",
+        payload_retention="full",
+    )
+
+    default_payload = audit_payload_for_event(event, default_policy)
+    full_payload = audit_payload_for_event(event, full_policy)
+
+    assert default_payload["_audit"]["payload_retention"] == "redacted"
+    assert full_payload["_audit"]["payload_retention"] == "full"
+    assert full_payload["event_payload"] == event.payload
+
+
+def test_build_audit_record_applies_policy_metadata_and_payload_projection():
+    event = _event().model_copy(update={"payload": {"password": "pw", "ok": True}})
+    policy = AuditPolicyConfig(
+        enabled=True,
+        dsn="postgresql://example",
+        retention="regulated",
+        payload_retention="redacted",
+        tags={"data_classification": "confidential"},
+    )
+
+    record = build_audit_record(
+        event,
+        sequence_id=1,
+        previous_hash=None,
+        audit_config=policy,
+    )
+
+    assert record.payload["_audit"]["retention"] == "regulated"
+    assert record.payload["_audit"]["tags"] == {"data_classification": "confidential"}
+    assert record.payload["event_payload"]["password"] == "[REDACTED]"
+    assert record.payload_sha256 == sha256_json(record.payload)
+
+
+def test_redact_payload_leaves_original_payload_unchanged():
+    original = {"profile": {"email": "ryan@example.com"}}
+
+    redacted, paths = redact_payload(original, configured_paths=["profile.email"])
+
+    assert original["profile"]["email"] == "ryan@example.com"
+    assert redacted["profile"]["email"] == "[REDACTED]"
+    assert paths == {"$.profile.email"}
+
+
+class _FailingAuditSink(PostgresAuditEventSink):
+    def insert_event(self, event: BpgEvent):  # type: ignore[override]
+        raise RuntimeError("database unavailable")
+
+
+def test_warn_failure_policy_logs_without_raising(caplog):
+    sink = _FailingAuditSink(dsn="postgresql://example", failure_policy="warn")
+
+    assert sink.emit(_event()) is not None
+
+    assert "Postgres audit event insert failed" in caplog.text
+
+
+def test_fail_run_failure_policy_raises():
+    sink = _FailingAuditSink(dsn="postgresql://example", failure_policy="fail_run")
+
+    with pytest.raises(AuditSinkFailure, match="Postgres audit event insert failed"):
+        sink.emit(_event())
 
 
 def test_observability_builder_registers_audit_sink():

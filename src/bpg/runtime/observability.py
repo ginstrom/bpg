@@ -106,8 +106,8 @@ class EventSink(ABC):
     def emit(self, event: BpgEvent) -> BpgEvent | None:
         """Receive and process a single canonical :class:`BpgEvent`.
 
-        Implementations MUST NOT raise — swallow or log exceptions internally
-        so that a sink failure never disrupts process execution.
+        Implementations should swallow or log exceptions internally unless they
+        enforce an explicit fail-run policy, such as durable audit capture.
 
         Args:
             event: The structured event to process.
@@ -140,7 +140,9 @@ class EventSinkGroup(EventSink):
         for sink in self._sinks:
             try:
                 enriched = sink.emit(current)
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
+                if getattr(exc, "audit_failure_policy", None) == "fail_run":
+                    raise
                 continue
             if isinstance(enriched, BpgEvent):
                 current = enriched

@@ -108,6 +108,7 @@ class BpgEvent(BaseModel):
     input_sha256: str | None = None
     output_sha256: str | None = None
     redaction_policy_id: str | None = None
+    redacted_field_paths: list[str] = Field(default_factory=list)
     payload: dict[str, Any] | None = None
     payload_sha256: str | None = None
     tags: dict[str, str] = Field(default_factory=dict)

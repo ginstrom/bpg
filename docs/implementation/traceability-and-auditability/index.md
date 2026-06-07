@@ -9,7 +9,7 @@ The work should be delivered in order. Each step is self-contained enough to han
 - [x] [2. Runtime Sink Refactor](02-runtime-sink-refactor/index.md)
 - [x] [3. OpenTelemetry Tracing](03-opentelemetry-tracing/index.md)
 - [x] [4. Postgres Audit Ledger](04-postgres-audit-ledger/index.md)
-- [ ] [5. Audit Policy Controls](05-audit-policy-controls/index.md)
+- [x] [5. Audit Policy Controls](05-audit-policy-controls/index.md)
 - [ ] [6. Temporal Metadata](06-temporal-metadata/index.md)
 - [ ] [7. Checkpointing and Anchoring](07-checkpointing-and-anchoring/index.md)
 - [ ] [8. CLI Inspection and Verification](08-cli-inspection-and-verification/index.md)
