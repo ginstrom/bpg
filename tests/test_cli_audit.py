@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from bpg.audit import build_audit_record, verify_audit_chain
+from bpg.audit import AuditPolicyConfig, build_audit_record, verify_audit_chain
 from bpg.cli import app
 from bpg.runtime.events import canonical_json
 
@@ -116,6 +116,48 @@ def test_audit_verify_detects_tampering(fake_sink):
     assert result.exit_code == 1
     assert "ok=False" in result.stdout
     assert "payload_sha256 mismatch" in result.stdout
+
+
+def test_audit_export_includes_temporal_correlation(fake_sink, tmp_path: Path):
+    temporal_event = _event(
+        "node_completed",
+        event_id="event-temporal",
+        node_id="triage",
+    ).model_copy(
+        update={
+            "temporal_namespace": "default",
+            "temporal_workflow_id": "wf-1",
+            "temporal_activity_id": "act-1",
+            "input_sha256": "input-hash",
+            "output_sha256": "output-hash",
+        }
+    )
+    policy = AuditPolicyConfig(enabled=True, dsn="postgresql://example")
+    record = build_audit_record(
+        temporal_event,
+        sequence_id=3,
+        previous_hash=None,
+        audit_config=policy,
+    )
+    fake_sink._rows.append(record.to_insert_row())
+
+    output = tmp_path / "bundle-temporal.json"
+    result = runner.invoke(app, ["audit", "export", "run-1", "--output", str(output)])
+    assert result.exit_code == 0
+
+    bundle = json.loads(output.read_text(encoding="utf-8"))
+    assert bundle["temporal"] == {
+        "namespace": "default",
+        "workflow_id": "wf-1",
+        "activity_id": "act-1",
+    }
+    correlation_rows = [
+        row["payload"]["_correlation"]
+        for row in bundle["events"]
+        if row.get("payload", {}).get("_correlation")
+    ]
+    assert any(item.get("input_sha256") == "input-hash" for item in correlation_rows)
+    assert any(item.get("output_sha256") == "output-hash" for item in correlation_rows)
 
 
 def test_audit_export_writes_deterministic_bundle(fake_sink, tmp_path: Path):

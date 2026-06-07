@@ -35,6 +35,8 @@ from bpg.audit import (
     verify_audit_chain,
     verify_checkpoint_signature,
 )
+from bpg.audit.inspection import extract_temporal_ids
+from bpg.audit.policy import correlation_context_for_event
 from bpg.runtime.events import BpgEvent, sha256_json
 from bpg.runtime.observability import NoopEventSink, build_observability_sink
 
@@ -75,7 +77,7 @@ def test_audit_record_projection_hashes_payload_deterministically():
 
     assert record.chain_scope == "run"
     assert record.chain_id == event.run_id
-    assert record.payload_sha256 == sha256_json(event.payload)
+    assert record.payload_sha256 == sha256_json(record.payload)
     assert record.event_hash == same_record.event_hash
     assert record.event_hash == compute_audit_event_hash(record.to_insert_row())
 
@@ -413,6 +415,69 @@ def test_full_payload_retention_requires_explicit_policy():
     assert default_payload["_audit"]["payload_retention"] == "redacted"
     assert full_payload["_audit"]["payload_retention"] == "full"
     assert full_payload["event_payload"] == event.payload
+
+
+def test_correlation_context_for_event_extracts_temporal_and_hashes():
+    event = _event().model_copy(
+        update={
+            "temporal_namespace": "default",
+            "temporal_workflow_id": "wf-1",
+            "temporal_activity_id": "act-1",
+            "input_sha256": "input-hash",
+            "output_sha256": "output-hash",
+            "tags": {"environment": "production"},
+        }
+    )
+
+    correlation = correlation_context_for_event(event)
+
+    assert correlation["temporal_namespace"] == "default"
+    assert correlation["temporal_workflow_id"] == "wf-1"
+    assert correlation["temporal_activity_id"] == "act-1"
+    assert correlation["input_sha256"] == "input-hash"
+    assert correlation["output_sha256"] == "output-hash"
+    assert correlation["tags"] == {"environment": "production"}
+
+
+def test_build_audit_record_projects_correlation_into_payload():
+    event = _event().model_copy(
+        update={
+            "temporal_workflow_id": "wf-1",
+            "input_sha256": "input-hash",
+            "output_sha256": "output-hash",
+        }
+    )
+    policy = AuditPolicyConfig(enabled=True, dsn="postgresql://example")
+
+    record = build_audit_record(
+        event,
+        sequence_id=1,
+        previous_hash=None,
+        audit_config=policy,
+    )
+
+    assert record.payload["_correlation"]["temporal_workflow_id"] == "wf-1"
+    assert record.payload["_correlation"]["input_sha256"] == "input-hash"
+    assert record.payload["_correlation"]["output_sha256"] == "output-hash"
+    assert record.payload_sha256 == sha256_json(record.payload)
+
+
+def test_extract_temporal_ids_reads_correlation_section():
+    rows = [
+        {
+            "payload": {
+                "_correlation": {
+                    "temporal_namespace": "default",
+                    "temporal_workflow_id": "wf-1",
+                }
+            }
+        }
+    ]
+
+    assert extract_temporal_ids(rows) == {
+        "namespace": "default",
+        "workflow_id": "wf-1",
+    }
 
 
 def test_build_audit_record_applies_policy_metadata_and_payload_projection():

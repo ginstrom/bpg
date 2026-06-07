@@ -17,6 +17,7 @@ from bpg.audit.policy import (
     DuplicateStrategy,
     apply_audit_policy,
     audit_payload_for_event,
+    enrich_audit_payload_with_correlation,
 )
 from bpg.runtime.events import BpgEvent, canonical_json, sha256_json
 
@@ -281,8 +282,10 @@ def is_audit_worthy_event(event: BpgEvent) -> bool:  # noqa: ARG001
 
 def _payload_for_audit(event: BpgEvent, audit_config: AuditPolicyConfig | None) -> dict[str, Any]:
     if audit_config is None:
-        return dict(event.payload or {})
-    return audit_payload_for_event(event, audit_config)
+        payload: dict[str, Any] = dict(event.payload or {})
+    else:
+        payload = audit_payload_for_event(event, audit_config)
+    return enrich_audit_payload_with_correlation(payload, event)
 
 
 def _timestamp_for_hash(value: str) -> str:

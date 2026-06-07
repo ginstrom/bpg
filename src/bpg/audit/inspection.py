@@ -120,6 +120,22 @@ def extract_trace_ids(rows: list[Mapping[str, Any]]) -> list[str]:
     return trace_ids
 
 
+def _extract_temporal_from_payload(payload: Mapping[str, Any], temporal: dict[str, Any]) -> None:
+    correlation = payload.get("_correlation")
+    sources: list[Mapping[str, Any]] = []
+    if isinstance(correlation, Mapping):
+        sources.append(correlation)
+    sources.append(payload)
+    for source in sources:
+        for key in _TEMPORAL_PAYLOAD_KEYS:
+            value = source.get(key)
+            if value is None:
+                continue
+            short_key = key.removeprefix("temporal_")
+            if short_key not in temporal:
+                temporal[short_key] = value
+
+
 def extract_temporal_ids(rows: list[Mapping[str, Any]]) -> dict[str, Any]:
     """Aggregate Temporal identifiers found in audit event payloads."""
     temporal: dict[str, Any] = {}
@@ -127,11 +143,7 @@ def extract_temporal_ids(rows: list[Mapping[str, Any]]) -> dict[str, Any]:
         payload = row.get("payload") or {}
         if not isinstance(payload, Mapping):
             continue
-        for key in _TEMPORAL_PAYLOAD_KEYS:
-            value = payload.get(key)
-            if value is None or key in temporal:
-                continue
-            temporal[key.removeprefix("temporal_")] = value
+        _extract_temporal_from_payload(payload, temporal)
     return temporal
 
 

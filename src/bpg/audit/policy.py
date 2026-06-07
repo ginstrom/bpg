@@ -17,6 +17,19 @@ _AUDIT_FAILURE_POLICIES = {"fail_run", "warn", "disabled"}
 _AUDIT_PAYLOAD_RETENTIONS = {"hash_only", "redacted", "full"}
 _AUDIT_SINKS = {"postgres"}
 _DUPLICATE_STRATEGIES = {"reject", "ignore"}
+_CORRELATION_TEMPORAL_FIELDS = (
+    "temporal_namespace",
+    "temporal_workflow_id",
+    "temporal_run_id",
+    "temporal_activity_id",
+    "temporal_activity_type",
+    "temporal_attempt",
+    "temporal_task_queue",
+    "temporal_timer_id",
+    "temporal_signal_name",
+    "temporal_child_workflow_id",
+)
+_CORRELATION_HASH_FIELDS = ("input_sha256", "output_sha256")
 _SENSITIVE_KEYS = {
     "api_key",
     "apikey",
@@ -140,6 +153,39 @@ def apply_audit_policy(event: BpgEvent, policy: AuditPolicyConfig) -> BpgEvent:
             "tags": {**event.tags, **policy.tags},
         }
     )
+
+
+def correlation_context_for_event(event: BpgEvent) -> dict[str, Any]:
+    """Extract durable correlation fields from a canonical event envelope."""
+    correlation: dict[str, Any] = {}
+    for field in _CORRELATION_TEMPORAL_FIELDS:
+        value = getattr(event, field, None)
+        if value is not None:
+            correlation[field] = value
+    for field in _CORRELATION_HASH_FIELDS:
+        value = getattr(event, field, None)
+        if value is not None:
+            correlation[field] = value
+    if event.redaction_policy_id is not None:
+        correlation["redaction_policy_id"] = event.redaction_policy_id
+    if event.redacted_field_paths:
+        correlation["redacted_field_paths"] = list(event.redacted_field_paths)
+    if event.tags:
+        correlation["tags"] = dict(event.tags)
+    return correlation
+
+
+def enrich_audit_payload_with_correlation(
+    payload: Mapping[str, Any],
+    event: BpgEvent,
+) -> dict[str, Any]:
+    """Attach a stable ``_correlation`` section to an audit payload."""
+    correlation = correlation_context_for_event(event)
+    if not correlation:
+        return dict(payload)
+    enriched = dict(payload)
+    enriched["_correlation"] = correlation
+    return enriched
 
 
 def audit_payload_for_event(event: BpgEvent, policy: AuditPolicyConfig) -> dict[str, Any]:
